@@ -24,7 +24,7 @@ set(NL_PY_DIR  ${CMAKE_BINARY_DIR}/pythonsrc/src/natlink)
 
 set (NL_FILES ${NL_BINARY_DIR}/_natlink_core_legacy.pyd ${NL_BINARY_DIR}/_natlink_core_legacy.pdb 
 ${NL_BINARY_DIR}/_natlink_core.pyd ${NL_BINARY_DIR}/_natlink_core.pdb
-${_Python3_RUNTIME_LIBRARY_RELEASE} ) 
+${_Python_RUNTIME_LIBRARY_RELEASE} ) 
 
 add_custom_target(natlink-package ALL DEPENDS "${WHEEL_PATH}")
 
