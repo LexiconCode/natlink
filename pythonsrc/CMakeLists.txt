@@ -1,6 +1,6 @@
 message("src CMakeLists.txt")
 
-cmake_path(GET Python3_EXECUTABLE PARENT_PATH python_root)
+
 
 
 #in theory any python should work, not necessarily the python used to run natlink.  Maybe not even a windows python.
