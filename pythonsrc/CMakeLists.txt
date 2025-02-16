@@ -1,14 +1,5 @@
 message("src CMakeLists.txt")
 
-
-
-
-#in theory any python should work, not necessarily the python used to run natlink.  Maybe not even a windows python.
-#that could be useful in something like a github build action.  
-
-
-set(PACKAGE "dist/natlink-${NATLINK_VERSION}-py3-none-any.whl")
-
 #there are few files in the python portion, list them individually.
 
 configure_file(pyproject.toml pyproject.toml)
@@ -28,14 +19,12 @@ ${_Python_RUNTIME_LIBRARY_RELEASE} )
 
 add_custom_target(natlink-package ALL DEPENDS "${WHEEL_PATH}")
 
-#    If it is ever desired to use a different Python for building the wheel, than the natlink python,
-#   change this to use the desired python in the custom command below:  COMMAND ${Python3_EXECUTABLE} -m build
-
 add_custom_command(
     OUTPUT "${WHEEL_PATH}"
-    COMMENT "Building python wheel package in ${WHEEL_PATH}"
+    COMMENT "Adding ${NL_FILES} to python package"
     COMMAND ${CMAKE_COMMAND} -E  copy ${NL_FILES}  ${NL_PY_DIR}
-    COMMAND ${Python3_EXECUTABLE} -m build
+    COMMENT "Now Building Python Package" 
+    COMMAND ${FLIT} build --format wheel 
     DEPENDS StampDriver # otherwise the stamps are not checked
         ${PROJECT_BINARY_DIR}/NatlinkSource/NatlinkSource.STAMP
         ${NL_FILES}
