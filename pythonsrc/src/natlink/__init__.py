@@ -17,7 +17,6 @@ import ctypes
 import contextlib
 import win32api
 import win32gui
-from dtactions.vocola_sendkeys import ext_keys   ### , SendInput
 W32OutputDebugString = ctypes.windll.kernel32.OutputDebugStringW
 
 #copied from pydebugstring.  
@@ -73,8 +72,8 @@ def playString(a, hook=0):
     if hook:
         return execScript(f'SendSystemKeys("{a}")')
     # normal case:
+    from dtactions.vocola_sendkeys import ext_keys   ### , SendInput
     return ext_keys.send_input(a)
-
 
 def playEvents16(events):
     """obsolete with Dragon 16.
