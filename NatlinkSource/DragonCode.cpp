@@ -1728,6 +1728,15 @@ BOOL CDragonCode::natConnect( IServiceProvider * pIDgnSite, BOOL bUseThreads )
 		__uuidof(IDgnSREngineControl), (void**)&m_pIDgnSREngineControl );
 	RETURNIFERROR( rc, "ISRCentral::QueryInterface(IDgnSREngineControl)" );
 
+	// Detect Dragon version — DNS 16 has different COM calling conventions.
+	{
+		WORD wMajor = 0, wMinor = 0, wBuild = 0;
+		rc = m_pIDgnSREngineControl->GetVersion(&wMajor, &wMinor, &wBuild);
+		if (SUCCEEDED(rc)) {
+			m_dragonMajorVersion = wMajor;
+		}
+	}
+
 	// get the speech services interfaces
 
 	IDgnSpeechServicesPtr pSpchSvc;
@@ -2015,32 +2024,37 @@ BOOL CDragonCode::playString( const char * pszKeys, DWORD dwFlags )
 	DWORD dwClientCode = ++dwUnique;
 
 	DWORD dwNumUndo=0;
-		
 
-	#ifdef UNICODE
+	if (m_dragonMajorVersion >= 16) {
+		// DNS 16 added a 6th parameter to PlayString that controls whether
+		// the PlaybackDone callback fires.  Passing 0 = fire-and-forget
+		// (no callback), non-zero = notify via PlaybackDone.
+		// The callee does ret 28 (this + 6 params), so we must use raw
+		// vtable calls to avoid ESP corruption with the 5-param header.
+		void** vtable = *(void***)((IUnknown*)m_pIDgnSSvcOutputEvent);
+		void* pfnPlayString = vtable[4];  // slot 4 = PlayString
+		void* pThis = (void*)m_pIDgnSSvcOutputEvent;
+		DWORD* pNumUndo = &dwNumUndo;
+		HRESULT comRc;
 
+		__asm {
+			push 1                    // [5] DWORD dwNotify — non-zero for PlaybackDone
+			push pNumUndo             // [4] DWORD* pNumUndo
+			push dwClientCode         // [3] DWORD dwClientCode
+			push 0xFFFFFFFF           // [2] DWORD dwDelay (-1)
+			push dwFlags              // [1] DWORD dwFlags
+			push pszKeys              // [0] const char* pszKeys
+			push pThis                // this
+			call pfnPlayString
+			mov comRc, eax
+		}
 
-	rc = m_pIDgnSSvcOutputEventA->PlayString(
-		pszKeys,	// string to send
-		dwFlags,		// flags
-		0xFFFFFFFF,		// delay (-1 for app specific delay)
-		dwClientCode,	// to identify which WM_PLAYBACK is ours
-		&dwNumUndo );
-
-	int const inputCodePage = CP_UTF8;
-	int const outputCodePage = 1252;
-
-
-
-
-	#else
+		rc = comRc;
+	} else {
+		// DNS 13/15: standard 5-param COM call
 		rc = m_pIDgnSSvcOutputEvent->PlayString(
-			pszKeys, 	  // string to send
-			dwFlags,	  // flags
-			0xFFFFFFFF,   // delay (-1 for app specific delay)
-			dwClientCode, // to identify which WM_PLAYBACK is ours
-			&dwNumUndo ); // not used (number of backspaces needed to undo)
-	#endif
+			pszKeys, dwFlags, 0xFFFFFFFF, dwClientCode, &dwNumUndo );
+	}
 
 
 	RETURNIFERROR( rc, "IDgnSSvcOutputEvent::PlayString" );
@@ -2586,10 +2600,32 @@ BOOL CDragonCode::playEvents( DWORD dwCount, HOOK_EVENTMSG * pEvents )
 	static DWORD dwUnique = 1;
 	DWORD dwClientCode = ++dwUnique;
 
-	rc = m_pIDgnSSvcOutputEvent->PlayEvents(
-		dwCount, pEvents,
-		0xFFFFFFFF,   	// delay (-1 for app specific delay)
-		dwClientCode ); // to identify which WM_PLAYBACK is ours
+	if (m_dragonMajorVersion >= 16) {
+		// DNS 16 added a 5th parameter to PlayEvents that controls whether
+		// the PlaybackDone callback fires (same as PlayString's 6th param).
+		// The callee does ret 24 (this + 5 params), so raw vtable call needed.
+		void** vtable = *(void***)((IUnknown*)m_pIDgnSSvcOutputEvent);
+		void* pfnPlayEvents = vtable[6];  // slot 6 = PlayEvents
+		void* pThis = (void*)m_pIDgnSSvcOutputEvent;
+		HRESULT comRc;
+
+		__asm {
+			push 1                    // [4] DWORD dwNotify — non-zero for PlaybackDone
+			push dwClientCode         // [3] DWORD dwClientCode
+			push 0xFFFFFFFF           // [2] DWORD dwDelay (-1)
+			push pEvents              // [1] const HOOK_EVENTMSG*
+			push dwCount              // [0] DWORD dwCount
+			push pThis                // this
+			call pfnPlayEvents
+			mov comRc, eax
+		}
+
+		rc = comRc;
+	} else {
+		// DNS 13/15: standard 4-param COM call
+		rc = m_pIDgnSSvcOutputEvent->PlayEvents(
+			dwCount, pEvents, 0xFFFFFFFF, dwClientCode );
+	}
 	RETURNIFERROR( rc, "IDgnSSvcOutputEvent::PlayEvents" );
 
 	// Now we want to wait until the playback finishes or is aborted
