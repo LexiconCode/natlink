@@ -1,0 +1,194 @@
+"""test_loaders.py - Tests for natlink_compat._loaders."""
+
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+from natlink_compat._state import _state
+from natlink_compat import _loaders
+from natlink_compat._loaders import (
+    _loader_name, _loader_base_name, _as_list, _loader_module_names,
+    get_disabled_loaders, get_all_loader_names, discover_and_import,
+    start_loader, start_and_register, stop_loader, stop_loaders,
+    add_loader, remove_loader, reload_loader, register_running_loader,
+    get_loaders, clear_all,
+)
+
+
+def _make_loader(name="fake", has_start=True, has_run=False,
+                 has_stop=True, has_trigger_load=False):
+    loader = MagicMock()
+    loader.__name__ = name
+    if not has_start: del loader.start
+    if not has_run: del loader.run
+    if not has_stop: del loader.stop
+    if not has_trigger_load: del loader.trigger_load
+    if hasattr(loader, "unload_all_loaded_modules"):
+        del loader.unload_all_loaded_modules
+    return loader
+
+
+def _reset():
+    _state.loaders.clear()
+    _state.reset()
+    _loader_module_names.clear()
+
+
+class TestNaming(unittest.TestCase):
+
+    def test_loader_name(self):
+        m = MagicMock(); m.__name__ = "x"
+        self.assertEqual(_loader_name(m), "x")
+        self.assertEqual(_loader_name(object()), "object")
+
+    def test_base_name(self):
+        m = MagicMock()
+        _loader_module_names[m] = "natlinkcore.loader"
+        self.assertEqual(_loader_base_name(m), "natlinkcore")
+        _loader_module_names.clear()
+
+    def test_as_list(self):
+        o = object()
+        self.assertEqual(_as_list(o), [o])
+        self.assertEqual(_as_list([1, 2]), [1, 2])
+        self.assertEqual(_as_list((1,)), [1])
+
+
+class TestDiscovery(unittest.TestCase):
+
+    def setUp(self): _reset()
+    def tearDown(self): _reset()
+
+    def test_disabled_loaders(self):
+        cfg = MagicMock()
+        cfg.has_section.return_value = True
+        cfg.items.return_value = [("a", "disabled"), ("b", "enabled")]
+        with patch("natlink_com._config.load_config", return_value=cfg):
+            self.assertEqual(get_disabled_loaders(), {"a"})
+
+    def test_all_loader_names_entry_points(self):
+        ep = MagicMock(); ep.name = "natlinkcore"; ep.value = "natlinkcore.loader"
+        with patch("importlib.metadata.entry_points", return_value=[ep]):
+            with patch("importlib.util.find_spec", return_value=None):
+                result = get_all_loader_names()
+        self.assertEqual(result, [("natlinkcore", "natlinkcore.loader")])
+
+    def test_natlinkcore_fallback(self):
+        with patch("importlib.metadata.entry_points", return_value=[]):
+            with patch("importlib.util.find_spec", return_value=MagicMock()):
+                result = get_all_loader_names()
+        self.assertEqual(result, [("natlinkcore", "natlinkcore.loader")])
+
+    def test_discover_skips_disabled(self):
+        with patch.object(_loaders, "get_disabled_loaders", return_value={"bad"}):
+            with patch.object(_loaders, "get_all_loader_names",
+                              return_value=[("ok", "ok.mod"), ("bad", "bad.mod")]):
+                with patch("importlib.import_module", return_value=MagicMock()) as mi:
+                    discover_and_import()
+        mi.assert_called_once_with("ok.mod")
+
+
+class TestStartStop(unittest.TestCase):
+
+    def setUp(self): _reset()
+    def tearDown(self): _reset()
+
+    def test_start_calls_start_or_run(self):
+        self.assertTrue(start_loader(_make_loader(has_start=True)))
+        self.assertTrue(start_loader(_make_loader(has_start=False, has_run=True)))
+        self.assertFalse(start_loader(_make_loader(has_start=False, has_run=False)))
+
+    def test_start_exception_returns_false(self):
+        l = _make_loader(); l.start.side_effect = RuntimeError
+        self.assertFalse(start_loader(l))
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_start_and_register(self, _):
+        l = _make_loader()
+        self.assertTrue(start_and_register(l, "m"))
+        self.assertIn(l, _state.loaders)
+        self.assertEqual(_loader_module_names[l], "m")
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_self_registration(self, _):
+        sentinel = MagicMock()
+        l = _make_loader()
+        l.start.side_effect = lambda: _state.loaders.append(sentinel)
+        start_and_register(l, "sr")
+        self.assertIn(sentinel, _state.loaders)
+        self.assertNotIn(l, _state.loaders)
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_stop_and_stop_all(self, mock_rm):
+        l1, l2 = _make_loader("a"), _make_loader("b")
+        _state.loaders.extend([l1, l2])
+        stop_loaders()
+        self.assertEqual(_state.loaders, [])
+        self.assertEqual(mock_rm.call_count, 2)
+
+
+class TestPublicAPI(unittest.TestCase):
+
+    def setUp(self): _reset()
+    def tearDown(self): _reset()
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_add_not_connected(self, _):
+        l = _make_loader()
+        add_loader(l)
+        self.assertIn(l, _state.loaders)
+        l.start.assert_not_called()
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_add_connected_starts(self, _):
+        _state.backend = MagicMock()
+        l = _make_loader()
+        add_loader(l)
+        l.start.assert_called_once()
+
+    def test_add_rejects_no_start_or_run(self):
+        with self.assertRaises(TypeError):
+            add_loader(_make_loader(has_start=False, has_run=False))
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_add_skips_duplicate(self, _):
+        l = _make_loader()
+        _state.loaders.append(l)
+        add_loader(l)
+        self.assertEqual(_state.loaders.count(l), 1)
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_remove(self, _):
+        l = _make_loader()
+        _state.loaders.append(l)
+        remove_loader(l)
+        self.assertNotIn(l, _state.loaders)
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_reload_trigger_load(self, _):
+        l = _make_loader(has_trigger_load=True)
+        _state.loaders.append(l)
+        reload_loader(l)
+        l.trigger_load.assert_called_once_with(force_load=True)
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_reload_all(self, _):
+        l1 = _make_loader("a", has_trigger_load=True)
+        l2 = _make_loader("b", has_trigger_load=True)
+        _state.loaders.extend([l1, l2])
+        reload_loader(None)
+        l1.trigger_load.assert_called_once()
+        l2.trigger_load.assert_called_once()
+
+    def test_register_running_and_get(self):
+        l = _make_loader()
+        register_running_loader(l)
+        self.assertEqual(get_loaders(), [l])
+        self.assertIsNot(get_loaders(), _state.loaders)
+
+    def test_clear_all(self):
+        _state.loaders.append(_make_loader())
+        _loader_module_names[object()] = "x"
+        clear_all()
+        self.assertEqual(_state.loaders, [])
+        self.assertEqual(_loader_module_names, {})
