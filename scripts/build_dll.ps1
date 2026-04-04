@@ -20,7 +20,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PkgDir = Join-Path $PSScriptRoot "src\natlink_com"
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$PkgDir = Join-Path $RepoRoot "src\natlink_com"
+$PushedLocation = $false
 
 # --- Stop natlink launcher via shutdown event (clean) ---
 
@@ -60,7 +62,7 @@ function Stop-Dragon {
 
 $AllOutputs = @(
     "marshal64_v13_v14.dll", "marshal64_v15_v16.dll",
-    "dragon_interfaces.tlb"
+    "dragon_interfaces_v13_v14.tlb", "dragon_interfaces_v15_v16.tlb"
 )
 
 function Test-OutputsUnlocked {
@@ -96,6 +98,8 @@ function Get-VSPreset {
 # --- Main ---
 
 try {
+    Push-Location $RepoRoot
+    $PushedLocation = $true
     Stop-NatlinkLauncher
     Stop-Dragon
     Test-OutputsUnlocked
@@ -122,5 +126,8 @@ catch {
     Write-Host "`nERROR: $_" -ForegroundColor Red
 }
 finally {
+    if ($PushedLocation) {
+        Pop-Location
+    }
     Read-Host "`nPress Enter to exit"
 }
