@@ -28,7 +28,6 @@ class CDragonCode
 	CDragonCode() {
 		m_hMsgWnd = NULL;
 		m_dwKey = 0;
-		m_dragonMajorVersion = 13;
 		m_pBeginCallback = NULL;
 		m_pChangeCallback = NULL;
 		m_pFirstGramObj = NULL;
@@ -53,6 +52,7 @@ class CDragonCode
 		m_pMessageStack = NULL;
 		m_pIDgnSSvcOutputEventA=0;
 		m_pIDgnSSvcOutputEvent=0;
+		m_pIDgnSSvcOutputEventW=0;
 		m_pIDgnSSvcInterpreter=0;
 		m_pIDgnSSvcInterpreterA=0;
 
@@ -180,6 +180,7 @@ class CDragonCode
 	IDgnSREngineControlPtr m_pIDgnSREngineControl;
 	IDgnSSvcOutputEventPtr m_pIDgnSSvcOutputEvent;
 	IDgnSSvcOutputEventA * m_pIDgnSSvcOutputEventA;
+	IDgnSSvcOutputEventW * m_pIDgnSSvcOutputEventW;
 
 	IServiceProviderPtr m_pIServiceProvider;
 	IDgnExtModSupStringsPtr m_pIDgnExtModSupStrings;
@@ -190,10 +191,6 @@ class CDragonCode
 	// the key for unregistering our engine sink (a SAPI thing)
 	DWORD m_dwKey;
 
-	// Dragon major version (e.g. 13, 15, 16).  Detected at connect time
-	// via IDgnSREngineControl::GetVersion.  DNS 16 has different COM
-	// calling conventions for PlayString and PlayEvents.
-	DWORD m_dragonMajorVersion;
 
 	// the name of the log file (or en empty string if not known).  We
 	// assume that this will be less than the maximum path and file name
