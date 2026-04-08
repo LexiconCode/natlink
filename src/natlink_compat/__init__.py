@@ -25,7 +25,7 @@ from ._actions import (
 )
 from ._speech import playString, playEvents, execScript, recognitionMimic
 from ._ui_dispatch import notify_text
-from ._legacy import setMessageWindow
+from ._legacy import setMessageWindow, displayText
 from ._system import (getClipboard, getCursorPos, getScreenSize, getCurrentModule,
                       getCurrentUser, getMicState, setMicState, inputFromFile, getCallbackDepth)
 from ._users import (getAllUsers, createUser, openUser, saveUser, getUserTraining, getTrainingMode, startTraining, finishTraining)
@@ -182,7 +182,7 @@ __all__ = [
     "PHASE_IDLE", "PHASE_WAITING_FOR_DRAGON", "PHASE_CONNECTING",
     "PHASE_LOADING_PROFILE", "PHASE_CONNECTED", "PHASE_RESTARTING", "PHASE_ERROR",
     "playString", "playEvents", "execScript",
-    "recognitionMimic", "notify_text",
+    "recognitionMimic", "notify_text", "displayText",
     "getClipboard", "getCursorPos", "getScreenSize",
     "getCurrentModule", "getCurrentUser",
     "getMicState", "setMicState",
