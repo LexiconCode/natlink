@@ -1,7 +1,9 @@
 # Dragon API
 
 These functions, callbacks, objects, and exceptions make up natlink's
-Dragon-facing public API.
+Dragon-facing public API.  The original C extension API is documented in
+[natlink.txt](../../natlink.txt)
+([upstream](https://github.com/dictation-toolbox/natlink/blob/master/NatlinkSource/natlink.txt)).
 
 ## Connection And Lifecycle
 
@@ -39,6 +41,68 @@ Dragon-facing public API.
 
 ::: natlink_compat.getCallbackDepth
 
+## Speech And Input
+
+### `playString`
+
+::: natlink_compat.playString
+
+### `playEvents`
+
+::: natlink_compat.playEvents
+
+### `execScript`
+
+::: natlink_compat.execScript
+
+### `recognitionMimic`
+
+::: natlink_compat.recognitionMimic
+
+### `inputFromFile`
+
+::: natlink_compat.inputFromFile
+
+## System Information
+
+### `getCurrentModule`
+
+::: natlink_compat.getCurrentModule
+
+### `getCurrentUser`
+
+::: natlink_compat.getCurrentUser
+
+### `getMicState`
+
+::: natlink_compat.getMicState
+
+### `setMicState`
+
+::: natlink_compat.setMicState
+
+### `getClipboard`
+
+::: natlink_compat.getClipboard
+
+### `getCursorPos`
+
+::: natlink_compat.getCursorPos
+
+### `getScreenSize`
+
+::: natlink_compat.getScreenSize
+
+## Display And UI
+
+### `displayText`
+
+::: natlink_compat.displayText
+
+### `setMessageWindow`
+
+::: natlink_compat.setMessageWindow
+
 ## Objects
 
 ### `GramObj`
@@ -65,8 +129,6 @@ Dragon-facing public API.
 
 ::: natlink_compat.saveUser
 
-::: natlink_compat.getCurrentUser
-
 ### Training
 
 ::: natlink_compat.getUserTraining
@@ -88,6 +150,16 @@ Dragon-facing public API.
 ::: natlink_compat.setWordInfo
 
 ::: natlink_compat.getWordProns
+
+### Extended Vocabulary
+
+::: natlink_compat.enumerateWords
+
+::: natlink_compat.enumeratePrefixWords
+
+::: natlink_compat.getWordFromPrefix
+
+::: natlink_compat.getWordFromPron
 
 ## Exceptions
 

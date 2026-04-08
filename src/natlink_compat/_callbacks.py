@@ -430,37 +430,43 @@ def _remove_callbacks_for(loader):
 
 
 def setBeginCallback(callback):
-    """Set or clear the begin callback.
+    """Register a callback invoked at the start of each recognition.
 
-    Matches C++ CDragonCode::setBeginCallback:
-      - Pass a callable to set the callback (replaces any previous one
-        from the same owner).
-      - Pass None to clear the callback.
+    Dragon pauses all recognition processing until the callback returns.
+    It is safe to call other natlink functions from within the callback.
 
-    "first we call the global callback ... now we call the grammar callbacks"
-    — Joel Gould, DragonCode.cpp (doPausedProcessing)
+    The callback receives a single parameter: the same ``(module_path,
+    window_title, window_handle)`` tuple returned by getCurrentModule.
+
+    The global begin callback fires first, followed by per-grammar begin
+    callbacks (set via ``GramObj.setBeginCallback``).
+
+    Pass ``None`` to clear the callback.
     """
     _set_callback(_state.begin_callbacks, callback)
 
 
 def setChangeCallback(callback):
-    """Set or clear the change callback.
+    """Register a callback invoked when something in the system changes.
 
-    Matches C++ CDragonCode::setChangeCallback:
-      - Pass a callable to set the callback (replaces any previous one
-        from the same owner).
-      - Pass None to clear the callback.
+    The callback receives two parameters ``(change_type, info)``:
 
-    Callback receives (type, info) where type is "user" or "mic".
+    - ``("user", (user_name, speech_dir))`` — active user changed
+    - ``("mic", mic_state_string)`` — microphone state changed
+
+    Pass ``None`` to clear the callback.
     """
     _set_callback(_state.change_callbacks, callback)
 
 
 def setTimerCallback(pCallback, nMilliseconds=50):
-    """Set a repeating timer callback.
+    """Register a callback that fires automatically every N milliseconds.
 
-    Loaders handle their own timer multiplexing internally (e.g.
-    natlinkcore's NatlinkTimer). This is the raw Win32 timer interface.
+    The callback receives no parameters. Pass ``None`` to clear the timer.
+
+    Args:
+        pCallback: A callable or ``None`` to clear.
+        nMilliseconds: Timer interval in milliseconds (default 50).
     """
     from ._helpers import _require_connected, com_call
     _require_connected()

@@ -19,16 +19,33 @@ _loader_cache_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 def is_dragon_running() -> bool:
+    """Check if the Dragon NaturallySpeaking process is currently running."""
     from natlink_com._win32 import is_dragon_running as _is_running
     return _is_running()
 
 
 def start_dragon(wait: int = 20) -> int:
+    """Launch Dragon NaturallySpeaking and wait for it to be ready.
+
+    Args:
+        wait: Maximum seconds to wait for Dragon to start (default 20).
+
+    Returns:
+        0 on success, non-zero on failure.
+    """
     from natlink_com._dragon import start
     return start(wait=wait)
 
 
 def stop_dragon(force: bool = False) -> int:
+    """Shut down Dragon NaturallySpeaking.
+
+    Args:
+        force: If True, forcefully terminate the process.
+
+    Returns:
+        0 on success, non-zero on failure.
+    """
     from ._state import _state
     from natlink_com._dragon import stop
     return stop(force=force, conn=_state.conn)
@@ -129,11 +146,13 @@ def invalidate_loader_cache():
 # ---------------------------------------------------------------------------
 
 def toggle_auto_launch() -> None:
+    """Toggle whether natlink automatically launches Dragon on connect."""
     from natlink_com._config import toggle_bool_setting
     toggle_bool_setting("settings", "auto_launch_dragon", fallback=False)
 
 
 def is_auto_launch_enabled() -> bool:
+    """Return whether auto-launch of Dragon on connect is enabled."""
     from natlink_com._config import get_bool_setting
     return get_bool_setting("settings", "auto_launch_dragon", fallback=False)
 
@@ -172,6 +191,11 @@ def get_log_level() -> int:
 # ---------------------------------------------------------------------------
 
 def set_mic(state: str) -> None:
+    """Set the microphone state (action variant, no connection guard).
+
+    Args:
+        state: One of ``'on'``, ``'off'``, or ``'sleeping'``.
+    """
     from ._state import _state
     if _state.backend:
         _state.backend.set_mic_state(state)

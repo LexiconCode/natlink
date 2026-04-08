@@ -209,17 +209,21 @@ def _activate(discovered_loaders=None):
 
 
 def natConnect(bUseThreads: bool = False) -> _NatConnectContextManager:
-    """Connect to Dragon NaturallySpeaking via COM.
+    """Connect to Dragon NaturallySpeaking.
 
-    Three-phase initialization:
-      1. Discovery — import loaders
-      2. Connection — pure COM (NatlinkCOM)
-      3. Activation — diagnostics, state publication, start loaders
+    This will launch Dragon if it is not already running. As a side effect,
+    natlink acquires COM interface pointers into Dragon's speech engine.
 
-    UI provider setup is the caller's responsibility. Register a provider with
-    set_ui_provider() before natConnect() if you want UI/state dispatch.
+    Returns a context manager that calls natDisconnect on exit::
 
-    Returns a context manager that calls natDisconnect on exit.
+        with natlink.natConnect():
+            # connected to Dragon
+            ...
+        # automatically disconnected
+
+    Args:
+        bUseThreads: Accepted for backwards compatibility (threading is
+            always enabled in the current implementation).
     """
     if _state.connected:
         log.debug("natConnect: already connected, disconnecting first")
@@ -246,7 +250,11 @@ def natConnect(bUseThreads: bool = False) -> _NatConnectContextManager:
 
 
 def natDisconnect() -> None:
-    """Disconnect from Dragon and clean up all state."""
+    """Disconnect from Dragon by releasing all internal COM interface pointers.
+
+    This will cause Dragon to stop running if it was launched by natConnect.
+    All grammars, result objects, and dictation objects are invalidated.
+    """
     from ._ui_dispatch import set_phase
     from ._ui_protocol import PHASE_IDLE
 
@@ -320,7 +328,11 @@ def natDisconnect() -> None:
 
 
 def isNatSpeakRunning() -> int:
-    """Check if Dragon NaturallySpeaking is running. Returns 1 or 0."""
+    """Check if Dragon NaturallySpeaking is running.
+
+    Returns 1 if Dragon is running, 0 otherwise. This is the only natlink
+    function that can be called before natConnect.
+    """
     if _state.backend is not None:
         try:
             return 1 if _state.backend.is_dragon_running_remote() else 0
@@ -335,11 +347,16 @@ def isNatSpeakRunning() -> int:
 
 
 def waitForSpeech(timeout_ms: int = 0) -> None:
-    """Block until natDisconnect() is called or the shutdown event fires.
+    """Enter a Windows message loop to allow speech to be processed.
 
-    Reuses pump() for Win32 message dispatch and deferred callback drain.
-    A Win32 event created from the disconnect threading.Event allows
-    MsgWaitForMultipleObjects to wake immediately on disconnect.
+    Previously established callback functions will be invoked as speech
+    events occur. The function blocks until natDisconnect is called or the
+    timeout elapses.
+
+    Args:
+        timeout_ms: Timeout in milliseconds. ``0`` means wait indefinitely.
+            A negative value suppresses any UI and returns when the timeout
+            elapses.
     """
     _require_not_during_init("waitForSpeech")
     _require_not_paused("waitForSpeech")
