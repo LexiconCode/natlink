@@ -7,6 +7,7 @@ silently accepts its original arguments and does nothing.
 The import in __init__.py re-exports them under their original names.
 """
 
+import logging
 from typing import Callable, Optional
 
 
@@ -33,18 +34,20 @@ def displayText(text: str, isError: bool = False, logText: bool = True) -> None:
     """Append a message to the natlink output window.
 
     In the original C extension, this displayed text in a dedicated Win32
-    window (red for errors, black for normal text). In the current
-    out-of-process architecture, stdout/stderr redirection is handled by
-    the logging subsystem. This shim writes to the real console streams
-    for any third-party code that calls ``natlink.displayText()`` directly.
+    window (red for errors, black for normal text).  Routes through
+    notify_text so all registered UI providers receive the text.
 
     Args:
         text: The text to display.
-        isError: If True, treat as error output (writes to stderr).
+        isError: If True, treat as error output.
         logText: If True, also copy the text to the Dragon log file
             (not implemented in this shim).
     """
-    import sys
-    stream = sys.__stderr__ if isError else sys.__stdout__
-    if stream is not None:
-        stream.write(text)
+    try:
+        from ._ui_dispatch import notify_text
+        notify_text(text, level=logging.ERROR if isError else logging.INFO)
+    except Exception:
+        import sys
+        stream = sys.__stderr__ if isError else sys.__stdout__
+        if stream is not None:
+            stream.write(text)

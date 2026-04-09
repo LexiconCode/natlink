@@ -22,7 +22,7 @@ class _OutputRedirector:
     def write(self, text: str) -> int:
         if text and text.strip():
             try:
-                from natlink_compat._ui_dispatch import notify_text
+                from natlink_compat import notify_text
                 notify_text(text, level=self._level)
             except Exception:
                 pass  # never let UI dispatch crash the caller
