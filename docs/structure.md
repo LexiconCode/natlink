@@ -62,8 +62,10 @@ natlink/
 |   |   +-- _win32.py               # Win32 helpers (clipboard, cursor, screen, module info)
 |   |   +-- _sdata.py               # SDATA struct helpers (build/parse COM data blobs)
 |   |   +-- _com_helpers.py         # COM helper utilities (force_release, addref_raw, etc.)
-|   |   +-- _tlb.py                 # Type library loader
-|   |   +-- *.idl, *.tlb, *.dll     # Pre-built marshal DLLs and type libraries
+|   |   +-- _tlb.py                 # Vendored type library wrapper loader
+|   |   +-- _gen_v13_v14.py         # Vendored comtypes wrappers (DNS 13 / DPI 14)
+|   |   +-- _gen_v15_v16.py         # Vendored comtypes wrappers (DPI 15 / DPI 16)
+|   |   +-- *.idl, *.tlb, *.dll     # IDL sources, type libraries, and marshal DLLs
 |   |
 |   +-- natlink_ui/               # Default UI (separate namespace, same package)
 |       +-- __init__.py            # UIProvider + UI-owned install/uninstall entry points
@@ -75,7 +77,7 @@ natlink/
 |       +-- icons/                 # Icon assets
 |
 +-- tests/                         # Test suite
-+-- scripts/                       # Developer scripts
++-- scripts/                       # Developer scripts (build, docs)
 +-- examples/                      # Usage examples
 +-- CMakeLists.txt                 # CMake build for marshal DLLs
 +-- pyproject.toml                 # Package metadata and build config

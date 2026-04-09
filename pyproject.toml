@@ -59,7 +59,7 @@ natlink-ui = "natlink_ui:main"
 "" = "src"
 
 [tool.setuptools.package-data]
-natlink_com = ["*.dll", "*.tlb"]
+natlink_com = ["*.dll"]
 natlink_ui = ["icons/*.ico"]
 
 [tool.setuptools.packages.find]

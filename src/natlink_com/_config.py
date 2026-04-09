@@ -91,6 +91,39 @@ def find_dragon_install():
     return 0, "", ""
 
 
+_cached_dragon_major = None
+
+
+def detect_dragon_major() -> int:
+    """Detect Dragon major version from INI or uninstall registry.
+
+    Returns the major version (e.g. 16, 15, 13) or 0 if unknown.
+    Result is cached per-process since Dragon version cannot change at runtime.
+    """
+    global _cached_dragon_major
+    if _cached_dragon_major is not None:
+        return _cached_dragon_major
+    cfg = load_config()
+    ver_str = cfg.get("dragon", "version", fallback="")
+    if ver_str:
+        try:
+            ver = int(ver_str)
+        except ValueError:
+            ver = 0
+        if 13 <= ver <= 20:
+            log.debug("Dragon %d from natlink.ini", ver)
+            _cached_dragon_major = ver
+            return ver
+        log.debug("Ignoring invalid dragon version %r in natlink.ini", ver_str)
+    ver, _, _ = find_dragon_install()
+    if ver:
+        log.debug("Dragon %d from uninstall registry", ver)
+    else:
+        log.warning("Could not detect Dragon version from registry")
+    _cached_dragon_major = ver
+    return ver
+
+
 def setup_config():
     """Detect environment, write INI, ensure COM overrides.
 

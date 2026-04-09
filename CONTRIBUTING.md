@@ -41,6 +41,16 @@ python -m pytest tests -q
 Some tests require a live Dragon installation and will skip automatically when
 Dragon is unavailable.
 
+## Building Marshal DLLs and TLB Wrappers
+
+After changing `.idl` files, rebuild the marshal DLLs and regenerate the
+vendored comtypes wrappers:
+
+```powershell
+.\scripts\build.ps1                  # full rebuild: DLLs + TLBs + vendored wrappers
+.\scripts\build.ps1 -SkipDll         # regenerate Python wrappers only (TLBs must exist)
+```
+
 ## Documentation
 
 Build and serve the docs (default):

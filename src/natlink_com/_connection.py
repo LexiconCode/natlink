@@ -38,42 +38,10 @@ _marshal_lock = threading.Lock()
 
 
 
-_cached_dragon_major = None
-
-
 def _detect_dragon_major() -> int:
-    """Detect Dragon major version from the uninstall registry.
-
-    Checks natlink.ini first (populated by runtime setup), then falls
-    back to enumerating the Windows Uninstall registry keys.
-    Returns the major version (e.g. 16, 15, 13) or 0 if unknown.
-    Result is cached per-process since Dragon version cannot change at runtime.
-    """
-    global _cached_dragon_major
-    if _cached_dragon_major is not None:
-        return _cached_dragon_major
-    from ._config import load_config, find_dragon_install
-    # Fast path: version already stored in natlink.ini by setup
-    cfg = load_config()
-    ver_str = cfg.get("dragon", "version", fallback="")
-    if ver_str:
-        try:
-            ver = int(ver_str)
-        except ValueError:
-            ver = 0
-        if 13 <= ver <= 20:
-            log.debug("Dragon %d from natlink.ini", ver)
-            _cached_dragon_major = ver
-            return ver
-        log.debug("Ignoring invalid dragon version %r in natlink.ini", ver_str)
-    # Slow path: enumerate uninstall registry
-    ver, _, _ = find_dragon_install()
-    if ver:
-        log.debug("Dragon %d from uninstall registry", ver)
-    else:
-        log.warning("Could not detect Dragon version from registry")
-    _cached_dragon_major = ver
-    return ver
+    """Detect Dragon major version — delegates to _config.detect_dragon_major."""
+    from ._config import detect_dragon_major
+    return detect_dragon_major()
 
 
 from ._tlb import load_tlb as _load_tlb

@@ -68,6 +68,10 @@ wrappers that back the compatibility layer. Provides launcher primitives
 (COM probing, event hooks, mutex, startup shortcuts) but does not own
 the orchestration that ties them together.
 
+COM interface wrappers are vendored (pre-generated from type libraries) rather
+than generated at runtime, eliminating the fragile codegen cache.
+`scripts\build.ps1` rebuilds all native artifacts from the IDL sources.
+
 ### `natlink_ui`
 
 Default Win32 tray + RichEdit output window. Implements the `UIProvider`
