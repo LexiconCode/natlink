@@ -55,7 +55,7 @@ natlink/
 |   |   +-- _grammar_parser.py   # Lark-based parser for SAPI 4.0 grammar syntax
 |   |   +-- _dragon.py              # Dragon start/stop/restart/status + profile save
 |   |   +-- _pump.py                 # Win32 message pump, message_loop, timer
-|   |   +-- _hidden_wnd.py          # Hidden COM window (WM_USER messages, stash map)
+|   |   +-- _hidden_wnd.py          # Hidden COM window (WM_USER messages, stash map, push_to_com)
 |   |   +-- _lexicon.py             # Vocabulary operations (ILexPronounceW, IDgnLexWordW)
 |   |   +-- _speech_ops.py          # Sync speech operations (mimic, playString, execScript)
 |   |   +-- _user_ops.py            # User/speaker management (select, create, training)

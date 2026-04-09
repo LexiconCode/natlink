@@ -66,6 +66,7 @@ WM_MIMICDONE        = WM_USER + 350  # "For when we get teh MimicDone notify sin
 # We repurpose those slots for Python-only messages:
 WM_PHRASE_HYPO      = WM_USER + 351  # Python-only: hypothesis callback (C++ was WM_HIDEWINDOW)
 WM_DICT_TEXTCHANGED = WM_USER + 352  # Python-only: dict text changed (C++ was WM_TRAYICON)
+WM_DEFERRED_CALL    = WM_USER + 353  # Python-only: run a callable on the main thread
 
 # --- Payload stash ---
 _stash = {}
@@ -160,6 +161,7 @@ def create():
         return None
 
     log.debug("Hidden COM window created: 0x%X", _hwnd)
+    _register_builtin_handlers()
     return _hwnd
 
 
@@ -186,3 +188,37 @@ def post(msg, wparam=0, lparam=0):
     if lparam:
         _stash.pop(lparam, None)
     return False
+
+
+# --- Deferred calls (cross-thread → main STA thread) ---
+
+def _handle_deferred_call(_wparam, lparam):
+    payload = stash_pop(lparam)
+    if payload:
+        fn, args = payload
+        fn(*args)
+
+
+def _register_builtin_handlers():
+    """Register handlers that must survive disconnect/reconnect cycles.
+
+    Called from create() each time the hidden window is (re-)created,
+    after unregister_all_handlers() wiped the previous set.
+    """
+    register_handler(WM_DEFERRED_CALL, _handle_deferred_call)
+
+
+def push_to_com(fn, *args):
+    """Schedule fn(*args) to run on the COM (STA) thread.
+
+    Posts WM_DEFERRED_CALL to the hidden window so the callable
+    executes during DispatchMessage on the thread that owns COM.
+    Safe to call from any thread.  Fire-and-forget — no return value.
+
+    If the hidden window does not exist (no COM connection), the call
+    is silently dropped — there is no COM to talk to anyway.
+    """
+    key = stash_put((fn, args))
+    if not post(WM_DEFERRED_CALL, lparam=key):
+        stash_pop(key)
+        log.debug("push_to_com: dropped (no hidden window)")

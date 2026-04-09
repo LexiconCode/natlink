@@ -71,7 +71,15 @@ def dragon_status() -> int:
 # ---------------------------------------------------------------------------
 
 def reload_grammars() -> None:
-    """Reload all enabled grammar loaders."""
+    """Reload all enabled grammar loaders.
+
+    Deferred to the main (STA) thread — grammar unload/load are COM calls.
+    """
+    from natlink_com._hidden_wnd import push_to_com
+    push_to_com(_reload_grammars_impl)
+
+
+def _reload_grammars_impl() -> None:
     from ._loaders import reload_loader, get_loaders, _loader_base_name
     from ._loaders import get_disabled_loaders as _get_disabled_loaders
     disabled = _get_disabled_loaders()
@@ -82,18 +90,23 @@ def reload_grammars() -> None:
 
 
 def toggle_loader(name: str) -> None:
-    """Toggle a loader between enabled and disabled."""
+    """Toggle a loader between enabled and disabled.
+
+    INI updates happen immediately; loader start/stop is deferred to the
+    main (STA) thread because COM calls must not cross thread boundaries.
+    """
     global _loader_states_cache
     from ._loaders import get_disabled_loaders as _get_disabled_loaders
+    from natlink_com._hidden_wnd import push_to_com
     is_disabled = name in _get_disabled_loaders()
     if is_disabled:
         from natlink_com._config import enable_loader
         enable_loader(name)
-        _start_loader_by_name(name)
+        push_to_com(_start_loader_by_name, name)
     else:
         from natlink_com._config import disable_loader
         disable_loader(name)
-        _stop_loader_by_name(name)
+        push_to_com(_stop_loader_by_name, name)
     invalidate_loader_cache()
 
 
@@ -191,11 +204,18 @@ def get_log_level() -> int:
 # ---------------------------------------------------------------------------
 
 def set_mic(state: str) -> None:
-    """Set the microphone state (action variant, no connection guard).
+    """Set the microphone state.
+
+    Deferred to the COM thread — set_mic_state is a COM call.
 
     Args:
         state: One of ``'on'``, ``'off'``, or ``'sleeping'``.
     """
+    from natlink_com._hidden_wnd import push_to_com
+    push_to_com(_set_mic_impl, state)
+
+
+def _set_mic_impl(state: str) -> None:
     from ._state import _state
     if _state.backend:
         _state.backend.set_mic_state(state)

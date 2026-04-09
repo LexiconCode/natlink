@@ -117,6 +117,9 @@ Dependency arrow only goes one way: `natlink_ui → natlink_compat → natlink_c
     - Exported public functions/classes
 - `natConnect()` does COM only — no UI logic. UI setup is the caller's responsibility.
 - COM callbacks return quickly; heavy work is deferred onto the message pump.
+- COM calls must happen on the STA main thread. Actions triggered from other
+  threads (UI worker, timer) use `push_to_com()` to post work to the hidden
+  window, which the main thread's pump dispatches.
 - Loader discovery and loader activation are separate phases.
 
 ## Why The Architecture Looks Like This
