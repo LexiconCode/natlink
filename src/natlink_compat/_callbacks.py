@@ -459,7 +459,7 @@ def setChangeCallback(callback):
     _set_callback(_state.change_callbacks, callback)
 
 
-def setTimerCallback(pCallback, nMilliseconds=50):
+def setTimerCallback(pCallback: object, nMilliseconds: int = 50):
     """Register a callback that fires automatically every N milliseconds.
 
     The callback receives no parameters. Pass ``None`` to clear the timer.
