@@ -67,8 +67,6 @@ def discover_loaders():
     """Phase 1: Import loader modules so they can register providers/helpers.
 
     Returns list of (module, module_name) tuples. Does NOT start loaders.
-    Loaders may call set_ui_provider() at import time or from a module-level
-    setup() function.
     """
     from ._loaders import discover_and_import
     discovered = discover_and_import()
@@ -168,12 +166,32 @@ def _activate(discovered_loaders=None):
         import sys as _sys
         backend = _state.backend
         backend.display_text(f"Python Version: {_sys.version}\r\n", False)
-        try:
-            from natlinkcore import __version__ as _nc_ver
-            backend.display_text(f"natlinkcore Version: {_nc_ver}\r\n", False)
-        except Exception:
-            pass
+        if discovered_loaders:
+            for mod, mod_name in discovered_loaders:
+                base = mod_name.split(".")[0]
+                ver = getattr(mod, "__version__", None)
+                if ver is None:
+                    pkg = _sys.modules.get(base)
+                    if pkg is not None:
+                        ver = getattr(pkg, "__version__", None)
+                if ver:
+                    backend.display_text(f"{base} Version: {ver}\r\n", False)
         backend.display_text("Natlink is loaded...\r\n\r\n", False)
+        if not _state.skip_loader and not discovered_loaders:
+            from ._loaders import get_all_loader_names, get_disabled_loaders
+            all_names = get_all_loader_names()
+            if all_names:
+                disabled = get_disabled_loaders()
+                backend.display_text(
+                    "WARNING: All discovered loaders are disabled.\r\n", True)
+                for name, mod_path in all_names:
+                    status = "disabled" if name in disabled else "enabled"
+                    backend.display_text(
+                        f"  {name} ({mod_path}) [{status}]\r\n", True)
+            else:
+                backend.display_text(
+                    "WARNING: No loaders discovered.\r\n"
+                    "Install a loader package or check your configuration.\r\n", True)
     except Exception:
         log.debug("Failed to display startup text", exc_info=True)
 

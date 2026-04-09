@@ -325,6 +325,9 @@ def _setup_logging_and_redirect():
                     "[%(threadName)s][%(name)s] %(message)s"))
                 _notify_handler = nh
 
+            # Silence noisy third-party loggers
+            logging.getLogger("comtypes").setLevel(logging.WARNING)
+
             for name, (client_level, file_level) in merged.items():
                 logger = logging.getLogger(name)
                 logger.setLevel(min(client_level, file_level))

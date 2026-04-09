@@ -11,6 +11,7 @@ import logging
 import sys as _sys
 import traceback
 
+from ._logging_setup import _NotifyTextHandler
 from ._state import _state
 
 log = logging.getLogger("natlink.compat")
@@ -101,9 +102,20 @@ def discover_and_import():
 
     Returns list of (module, module_name_str) tuples.
     """
+    all_names = get_all_loader_names()
+    if not all_names:
+        log.warning("No loaders discovered.")
+        return []
+
     disabled = get_disabled_loaders()
+    if log.isEnabledFor(logging.DEBUG):
+        log.debug("Loader discovery: found %d loader(s)", len(all_names))
+        for name, mod_path in all_names:
+            status = "disabled" if name in disabled else "enabled"
+            log.debug("  %s (%s) [%s]", name, mod_path, status)
+
     loaders = []
-    for name, mod_path in get_all_loader_names():
+    for name, mod_path in all_names:
         if name in disabled:
             log.info("Loader disabled in config, skipping: %s", name)
             continue
@@ -113,6 +125,10 @@ def discover_and_import():
             log.info("Discovered loader: %s (%s)", name, mod_path)
         except Exception:
             log.exception("Failed to load loader: %s", name)
+
+    if not loaders:
+        log.warning("All discovered loaders are disabled. Check [loaders] in natlink.ini.")
+
     return loaders
 
 
@@ -120,7 +136,34 @@ def discover_and_import():
 # Start / stop
 # ---------------------------------------------------------------------------
 
-def start_loader(loader):
+def _adopt_loader_logger(loader, mod_name):
+    """Wire a loader's logger into the messages window.
+
+    Replaces any StreamHandler the loader installed with a
+    _NotifyTextHandler so output goes directly to the UI —
+    no dependency on stdout redirect.
+
+    Loaders can opt out by setting ``natlink_manage_logging = False``.
+    Called after start() so the loader's own setup is complete.
+    """
+    if not mod_name:
+        return
+    if getattr(loader, "natlink_manage_logging", True) is False:
+        return
+    base = mod_name.split(".")[0]
+    logger = logging.getLogger(base)
+    if any(isinstance(h, _NotifyTextHandler) for h in logger.handlers):
+        return
+    for h in logger.handlers[:]:
+        if type(h) is logging.StreamHandler:
+            logger.removeHandler(h)
+    nh = _NotifyTextHandler()
+    nh.setLevel(logging.INFO)
+    nh.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    logger.addHandler(nh)
+
+
+def start_loader(loader, mod_name=""):
     """Start a single loader. Returns True on success, False on failure."""
     name = _loader_name(loader)
     try:
@@ -129,6 +172,7 @@ def start_loader(loader):
             raise AttributeError(f"{name} has no start() or run()")
         log.info("Starting loader: %s", name)
         start_fn()
+        _adopt_loader_logger(loader, mod_name)
         log.info("Loader started: %s", name)
         return True
     except Exception:
@@ -148,7 +192,7 @@ def start_and_register(loader, mod_name=""):
     with _state.lock:
         count_before = len(_state.loaders)
 
-    ok = start_loader(loader)
+    ok = start_loader(loader, mod_name=mod_name)
     if not ok:
         return False
 

@@ -17,6 +17,11 @@ class LoaderProtocol(Protocol):
 
     Implementations may be either class instances or modules with
     module-level start()/stop() functions.
+
+    Optional attributes:
+        natlink_manage_logging (bool): Set to False to prevent natlink
+            from replacing the loader's log handlers. Default is True
+            (natlink routes the loader's log output to the messages window).
     """
 
     def start(self) -> None:

@@ -8,6 +8,7 @@ from natlink_compat._state import _state
 from natlink_compat import _loaders
 from natlink_compat._loaders import (
     _loader_name, _loader_base_name, _as_list, _loader_module_names,
+    _adopt_loader_logger,
     get_disabled_loaders, get_all_loader_names, discover_and_import,
     start_loader, start_and_register, stop_loader, stop_loaders,
     add_loader, remove_loader, reload_loader, register_running_loader,
@@ -192,3 +193,78 @@ class TestPublicAPI(unittest.TestCase):
         clear_all()
         self.assertEqual(_state.loaders, [])
         self.assertEqual(_loader_module_names, {})
+
+
+class TestAdoptLoaderLogger(unittest.TestCase):
+
+    def setUp(self):
+        import logging
+        self._logger = logging.getLogger("_test_adopt")
+        self._logger.handlers.clear()
+        self._logger.propagate = False
+
+    def tearDown(self):
+        self._logger.handlers.clear()
+        self._logger.propagate = True
+
+    def test_adds_notify_handler(self):
+        import logging
+        from natlink_compat._logging_setup import _NotifyTextHandler
+        loader = MagicMock()
+        # Simulate what natlinkcore's setup_logger does
+        self._logger.addHandler(logging.StreamHandler())
+        _adopt_loader_logger(loader, "_test_adopt.loader")
+        types = [type(h) for h in self._logger.handlers]
+        self.assertIn(_NotifyTextHandler, types)
+        self.assertNotIn(logging.StreamHandler, types)
+
+    def test_noop_if_already_adopted(self):
+        from natlink_compat._logging_setup import _NotifyTextHandler
+        loader = MagicMock()
+        _adopt_loader_logger(loader, "_test_adopt.loader")
+        count = sum(1 for h in self._logger.handlers
+                    if isinstance(h, _NotifyTextHandler))
+        _adopt_loader_logger(loader, "_test_adopt.loader")
+        count2 = sum(1 for h in self._logger.handlers
+                     if isinstance(h, _NotifyTextHandler))
+        self.assertEqual(count, count2)
+
+    def test_noop_for_empty_name(self):
+        _adopt_loader_logger(MagicMock(), "")
+        self.assertEqual(self._logger.handlers, [])
+
+    def test_opt_out(self):
+        import logging
+        loader = MagicMock()
+        loader.natlink_manage_logging = False
+        self._logger.addHandler(logging.StreamHandler())
+        _adopt_loader_logger(loader, "_test_adopt.loader")
+        types = [type(h) for h in self._logger.handlers]
+        self.assertIn(logging.StreamHandler, types)
+
+
+class TestDisplayText(unittest.TestCase):
+
+    def test_routes_to_notify_text(self):
+        captured = []
+        def fake_notify(text, level=20):
+            captured.append((text, level))
+
+        with patch("natlink_compat._ui_dispatch.notify_text", fake_notify):
+            from natlink_compat._legacy import displayText
+            displayText("hello\r\n", False)
+            displayText("error\r\n", True)
+
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(captured[0], ("hello\r\n", 20))   # INFO
+        self.assertEqual(captured[1], ("error\r\n", 40))    # ERROR
+
+    def test_fallback_to_stdout(self):
+        import io
+        fake_stdout = io.StringIO()
+        with patch("natlink_compat._ui_dispatch.notify_text",
+                   side_effect=ImportError):
+            with patch("sys.__stdout__", fake_stdout):
+                from natlink_compat._legacy import displayText
+                displayText("fallback\r\n", False)
+        self.assertEqual(fake_stdout.getvalue(), "fallback\r\n")
