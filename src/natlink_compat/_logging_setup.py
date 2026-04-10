@@ -391,7 +391,8 @@ def ensure_natlinkcore_logging() -> None:
 
     try:
         from ._ui_dispatch import notify_text
-        for loader in _state.loaders:
+        for entry in _state.loader_registry:
+            loader = entry.loader
             bad = getattr(loader, "bad_modules", set())
             if bad:
                 notify_text(

@@ -33,8 +33,8 @@ class _NatlinkState:
         # Skip auto-discovery of loaders via entry_points on natConnect
         self.skip_loader: bool = False
 
-        # Active loaders (multiple allowed; managed by _launcher)
-        self.loaders: List[object] = []
+        # Active loaders (multiple allowed; managed by _loaders.py)
+        self.loader_registry: List = []  # List[_LoaderEntry]
 
         # Active UI provider (default tray/window shell or a replacement)
         self.ui_provider: Optional[object] = None

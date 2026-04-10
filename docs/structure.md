@@ -16,7 +16,7 @@ natlink/
 |   |   +-- _gram_obj.py          # GramObj (wraps ComGramObj)
 |   |   +-- _res_obj.py           # ResObj (wraps ComResObj)
 |   |   +-- _state.py             # Global connection state (single ui_provider slot)
-|   |   +-- _loaders.py           # Loader management: add/remove/get_loaders
+|   |   +-- _loaders.py           # Loader registry, discovery, and lifecycle
 |   |   +-- _loader_protocol.py   # LoaderProtocol (runtime-checkable)
 |   |   +-- _ui_protocol.py       # UIProvider protocol, NatlinkState dataclass
 |   |   +-- _ui_dispatch.py       # notify_ui(), notify_text(), set_phase()

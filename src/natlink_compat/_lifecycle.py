@@ -221,9 +221,10 @@ def _activate(discovered_loaders=None):
         _start_dragon_monitor()
 
     if not _state.skip_loader and discovered_loaders:
-        from ._loaders import start_and_register
+        from ._loaders import start_loader, _on_loaders_changed
         for mod, mod_name in discovered_loaders:
-            start_and_register(mod, mod_name)
+            start_loader(mod, mod_name, _notify=False)
+        _on_loaders_changed()
 
 
 def natConnect(bUseThreads: bool = False) -> _NatConnectContextManager:

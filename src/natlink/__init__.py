@@ -4,9 +4,9 @@ This package delegates to natlink_compat (which wraps the natlink_com
 COM backend) so that natlinkcore and user grammars can ``import natlink``
 and get a working implementation on 64-bit Python.
 
-Legacy loader registration:
+natlinkcore-style loader registration:
   natlinkcore sets ``natlink.active_loader = self`` to publish itself.
-  This legacy pattern is intercepted and routed to the loaders list.
+  This compatibility pattern is intercepted and routed to the loaders list.
   New code should use ``natlink.add_loader()`` instead.
 """
 import sys
@@ -18,11 +18,11 @@ from natlink_compat import __all__    # noqa: F401
 
 
 class _NatlinkModule(types.ModuleType):
-    """Module wrapper intercepting legacy loader registration."""
+    """Module wrapper intercepting natlinkcore-style loader registration."""
 
     def __setattr__(self, name, value):
         if name == "active_loader":
-            # Legacy loader registration: natlinkcore sets this inside
+            # natlinkcore sets this inside
             # start(). The loader is already running — just register it
             # without calling start again.
             from natlink_compat._loaders import register_running_loader
@@ -32,7 +32,7 @@ class _NatlinkModule(types.ModuleType):
 
     def __getattr__(self, name):
         if name == "active_loader":
-            # Legacy loader access: natlinkcore reads this back
+            # natlinkcore reads this back
             # (e.g. .bad_modules).
             loaders = _compat.get_loaders()
             return loaders[0] if loaders else None

@@ -108,13 +108,13 @@ def toggle_loader(name: str) -> None:
 
 
 def _start_loader_by_name(name):
-    from ._loaders import get_all_loader_names, start_and_register
+    from ._loaders import get_all_loader_names, start_loader
     import importlib
     for loader_name, mod_path in get_all_loader_names():
         if loader_name == name:
             try:
                 mod = importlib.import_module(mod_path)
-                start_and_register(mod, mod_path)
+                start_loader(mod, mod_path)
             except Exception:
                 log.exception("Failed to start loader: %s", name)
             break

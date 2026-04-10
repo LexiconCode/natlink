@@ -16,7 +16,7 @@ Or register via setuptools entry_points in your pyproject.toml:
     [project.entry-points."natlink.loaders"]
     simple = "example_loader"
 
-    Then define module-level run()/stop() functions (see bottom).
+    Then define module-level start()/stop() functions (see bottom).
     See example_entry_point_package/ for a complete pip-installable example.
 """
 
@@ -72,23 +72,21 @@ class SimpleLoader:
 
 # --- Module-level entry points for setuptools discovery ---
 # If this module is registered as a natlink.loaders entry_point,
-# natlink calls run() at startup and the loader self-registers.
+# natlink calls start() at startup and stop() at shutdown.
 
 _instance = None
 
 
-def run():
+def start():
     """Entry point called by natlink's entry_points discovery."""
-    import natlink
-
     global _instance
     grammar_dir = os.path.expanduser("~/natlink-grammars")
     _instance = SimpleLoader(grammar_dir)
-    natlink.add_loader(_instance)
+    _instance.start()
 
 
 def stop():
-    """Called if natlink stops loaders by module (fallback path)."""
+    """Called by natlink at shutdown."""
     global _instance
     if _instance:
         _instance.stop()

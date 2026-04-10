@@ -10,13 +10,59 @@ import importlib
 import logging
 import sys as _sys
 import traceback
+from dataclasses import dataclass, field
+from typing import List
 
 from ._logging_setup import _NotifyTextHandler
 from ._state import _state
 
 log = logging.getLogger("natlink.compat")
 
-_loader_module_names = {}
+
+@dataclass
+class _LoaderEntry:
+    """One active loader in the registry."""
+    loader: object
+    mod_name: str = ""
+    name: str = ""
+
+    def __post_init__(self):
+        if not self.name:
+            self.name = getattr(self.loader, "__name__", None) or type(self.loader).__name__
+
+    @property
+    def base_name(self):
+        """Top-level package name (e.g. 'natlinkcore' from 'natlinkcore.loader')."""
+        return self.mod_name.split(".")[0] if self.mod_name else ""
+
+
+# The registry lives in _state; these helpers access it.
+def _find_entry(loader) -> '_LoaderEntry | None':
+    """Find registry entry for a loader object."""
+    for entry in _state.loader_registry:
+        if entry.loader is loader:
+            return entry
+    return None
+
+
+def _find_entry_by_name(name: str) -> '_LoaderEntry | None':
+    """Find registry entry by base name."""
+    for entry in _state.loader_registry:
+        if entry.base_name == name:
+            return entry
+    return None
+
+
+def _register(loader, mod_name=""):
+    """Add a loader to the registry. No-op if already present."""
+    if _find_entry(loader) is not None:
+        return
+    _state.loader_registry.append(_LoaderEntry(loader=loader, mod_name=mod_name))
+
+
+def _unregister(loader):
+    """Remove a loader from the registry."""
+    _state.loader_registry[:] = [e for e in _state.loader_registry if e.loader is not loader]
 
 
 def _display(text, level=20):
@@ -40,30 +86,29 @@ def _on_loaders_changed():
 
 
 # ---------------------------------------------------------------------------
-# Naming helpers
+# Public naming helpers (used by _actions.py)
 # ---------------------------------------------------------------------------
 
 def _loader_name(loader):
     """Best-effort human-readable name for a loader."""
+    entry = _find_entry(loader)
+    if entry:
+        return entry.name
     return getattr(loader, "__name__", None) or type(loader).__name__
 
 
 def _loader_base_name(loader):
     """Top-level package name (e.g. 'natlinkcore' from 'natlinkcore.loader')."""
-    return _get_module_name(loader).split(".")[0]
+    entry = _find_entry(loader)
+    if entry:
+        return entry.base_name
+    return ""
 
 
 def _get_module_name(loader):
     """Return the module name string for a loader, or '' if unknown."""
-    with _state.lock:
-        return _loader_module_names.get(loader, "")
-
-
-def _as_list(loader_or_loaders):
-    """Normalize a single loader or list to a list."""
-    if isinstance(loader_or_loaders, (list, tuple)):
-        return list(loader_or_loaders)
-    return [loader_or_loaders]
+    entry = _find_entry(loader)
+    return entry.mod_name if entry else ""
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +219,9 @@ def _adopt_loader_logger(loader, mod_name):
     logger.addHandler(nh)
 
 
-def start_loader(loader, mod_name=""):
-    """Start a single loader. Returns True on success, False on failure."""
-    name = _loader_name(loader)
+def _start_impl(loader, mod_name=""):
+    """Call start() on a loader. Returns True on success, False on failure."""
+    name = _loader_name(loader) or mod_name
     try:
         start_fn = getattr(loader, "start", None) or getattr(loader, "run", None)
         if start_fn is None:
@@ -193,42 +238,42 @@ def start_loader(loader, mod_name=""):
         return False
 
 
-def start_and_register(loader, mod_name=""):
-    """Start a loader and register it in _state.loaders.
+def start_loader(loader, mod_name="", *, _notify=True):
+    """Start a loader and register it.
 
     Handles loaders that self-register during start() (e.g. natlinkcore
     sets natlink.active_loader = self) and loaders that don't.
     Returns True if the loader started successfully.
-    """
-    with _state.lock:
-        count_before = len(_state.loaders)
 
-    ok = start_loader(loader, mod_name=mod_name)
+    _notify: if False, skip _on_loaders_changed (caller will batch).
+    """
+    count_before = len(_state.loader_registry)
+
+    ok = _start_impl(loader, mod_name=mod_name)
     if not ok:
         return False
 
-    with _state.lock:
-        # Detect if loader self-registered during start()
-        self_registered = len(_state.loaders) > count_before
-        if self_registered:
-            registered = _state.loaders[-1]
-            if mod_name:
-                _loader_module_names[registered] = mod_name
-        elif loader not in _state.loaders:
-            _state.loaders.append(loader)
-            if mod_name:
-                _loader_module_names[loader] = mod_name
-            log.info("Loader registered (already running): %s", _loader_name(loader))
-    _on_loaders_changed()
+    # Detect if loader self-registered during start()
+    self_registered = len(_state.loader_registry) > count_before
+    if self_registered:
+        entry = _state.loader_registry[-1]
+        if mod_name and not entry.mod_name:
+            entry.mod_name = mod_name
+    elif _find_entry(loader) is None:
+        _register(loader, mod_name)
+        log.info("Loader registered (already running): %s", _loader_name(loader))
+
+    if _notify:
+        _on_loaders_changed()
     return True
 
 
 def stop_loader(loader):
     """Stop a single loader.
 
-    Tries stop() (LoaderProtocol), falls back to
-    unload_all_loaded_modules() (natlinkcore compat).
-    Removes any callbacks this loader registered.
+    Entry-point frameworks are authoritative for their own cleanup:
+    grammars, callbacks, timers, imported grammar modules, and framework-level
+    references.
     """
     name = _loader_name(loader)
     log.info("Stopping loader: %s", name)
@@ -240,14 +285,10 @@ def stop_loader(loader):
     except Exception:
         log.exception("Loader stop failed: %s", name)
 
-    from ._callbacks import _remove_callbacks_for
-    _remove_callbacks_for(loader)
-
-
 def stop_loaders():
     """Stop all active loaders. Called by natDisconnect."""
-    for loader in list(_state.loaders):
-        stop_loader(loader)
+    for entry in list(_state.loader_registry):
+        stop_loader(entry.loader)
     clear_all()
 
 
@@ -262,41 +303,27 @@ def add_loader(loaders, *, _module_name=""):
     method. If connected, start() is called immediately.
     """
     for loader in _as_list(loaders):
-        with _state.lock:
-            if loader in _state.loaders:
-                log.debug("add_loader: %s already active", _loader_name(loader))
-                continue
-            if not (hasattr(loader, "start") or hasattr(loader, "run")):
-                raise TypeError(
-                    f"Loader must have start() or run(), got {type(loader)}")
+        if _find_entry(loader) is not None:
+            log.debug("add_loader: %s already active", _loader_name(loader))
+            continue
+        if not (hasattr(loader, "start") or hasattr(loader, "run")):
+            raise TypeError(
+                f"Loader must have start() or run(), got {type(loader)}")
         if _state.connected:
-            ok = start_loader(loader)
-            if not ok:
-                continue
-            with _state.lock:
-                if loader not in _state.loaders:
-                    _state.loaders.append(loader)
+            start_loader(loader, _module_name)
         else:
-            with _state.lock:
-                _state.loaders.append(loader)
-        with _state.lock:
-            if _module_name:
-                _loader_module_names[loader] = _module_name
-        log.info("Loader added: %s", _loader_name(loader))
-        _on_loaders_changed()
+            _register(loader, _module_name)
+            log.info("Loader added: %s", _loader_name(loader))
+            _on_loaders_changed()
 
 
 def remove_loader(loaders):
     """Stop and remove one or more loaders. No-op for inactive loaders."""
     for loader in _as_list(loaders):
-        with _state.lock:
-            if loader not in _state.loaders:
-                continue
+        if _find_entry(loader) is None:
+            continue
         stop_loader(loader)
-        with _state.lock:
-            if loader in _state.loaders:
-                _state.loaders.remove(loader)
-            _loader_module_names.pop(loader, None)
+        _unregister(loader)
         log.info("Loader removed: %s", _loader_name(loader))
     _on_loaders_changed()
 
@@ -308,11 +335,12 @@ def reload_loader(loaders=None):
     Otherwise falls back to full stop/reimport/restart.
     """
     if loaders is None:
-        targets = [(l, _loader_module_names.get(l))
-                    for l in list(_state.loaders)]
+        targets = [(e.loader, e.mod_name) for e in list(_state.loader_registry)]
     else:
-        targets = [(l, _loader_module_names.get(l))
-                    for l in _as_list(loaders)]
+        targets = []
+        for loader in _as_list(loaders):
+            entry = _find_entry(loader)
+            targets.append((loader, entry.mod_name if entry else ""))
 
     if not targets:
         _display("No active loaders to reload.\r\n")
@@ -333,12 +361,9 @@ def reload_loader(loaders=None):
             continue
 
         # Slow path: full stop/reimport/restart
-        if target in _state.loaders:
+        if _find_entry(target) is not None:
             stop_loader(target)
-            with _state.lock:
-                if target in _state.loaders:
-                    _state.loaders.remove(target)
-                _loader_module_names.pop(target, None)
+            _unregister(target)
 
         if mod_name:
             mod = _sys.modules.get(mod_name)
@@ -347,7 +372,7 @@ def reload_loader(loaders=None):
                     importlib.reload(mod)
                 else:
                     mod = importlib.import_module(mod_name)
-                start_and_register(mod, mod_name)
+                start_loader(mod, mod_name, _notify=False)
             except Exception:
                 log.exception("Failed to reload loader: %s", mod_name)
         else:
@@ -357,23 +382,30 @@ def reload_loader(loaders=None):
 
 
 def register_running_loader(loader):
-    """Register a loader that is already running (legacy loader support)."""
-    with _state.lock:
-        if loader in _state.loaders:
-            return
-        _state.loaders.append(loader)
+    """Register a loader that is already running.
+
+    Supports frameworks that publish their active loader object from inside
+    start/run, such as natlinkcore's natlink.active_loader pattern.
+    """
+    if _find_entry(loader) is not None:
+        return
+    _register(loader)
     log.info("Loader registered (already running): %s", _loader_name(loader))
     _on_loaders_changed()
 
 
 def get_loaders():
-    """Return a list of all active loaders (snapshot)."""
-    with _state.lock:
-        return list(_state.loaders)
+    """Return a list of all active loader objects (snapshot)."""
+    return [e.loader for e in _state.loader_registry]
 
 
 def clear_all():
-    """Clear loaders and module name tracking."""
-    with _state.lock:
-        _state.loaders.clear()
-        _loader_module_names.clear()
+    """Clear the loader registry."""
+    _state.loader_registry.clear()
+
+
+def _as_list(loader_or_loaders):
+    """Normalize a single loader or list to a list."""
+    if isinstance(loader_or_loaders, (list, tuple)):
+        return list(loader_or_loaders)
+    return [loader_or_loaders]

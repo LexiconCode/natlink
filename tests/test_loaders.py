@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 from natlink_compat._state import _state
 from natlink_compat import _loaders
 from natlink_compat._loaders import (
-    _loader_name, _loader_base_name, _as_list, _loader_module_names,
-    _adopt_loader_logger,
+    _loader_name, _loader_base_name, _as_list, _LoaderEntry,
+    _adopt_loader_logger, _register, _find_entry,
     get_disabled_loaders, get_all_loader_names, discover_and_import,
-    start_loader, start_and_register, stop_loader, stop_loaders,
+    start_loader, stop_loader, stop_loaders,
     add_loader, remove_loader, reload_loader, register_running_loader,
     get_loaders, clear_all,
 )
@@ -30,9 +30,8 @@ def _make_loader(name="fake", has_start=True, has_run=False,
 
 
 def _reset():
-    _state.loaders.clear()
+    _state.loader_registry.clear()
     _state.reset()
-    _loader_module_names.clear()
 
 
 class TestNaming(unittest.TestCase):
@@ -44,9 +43,9 @@ class TestNaming(unittest.TestCase):
 
     def test_base_name(self):
         m = MagicMock()
-        _loader_module_names[m] = "natlinkcore.loader"
+        _register(m, "natlinkcore.loader")
         self.assertEqual(_loader_base_name(m), "natlinkcore")
-        _loader_module_names.clear()
+        _state.loader_registry.clear()
 
     def test_as_list(self):
         o = object()
@@ -96,7 +95,9 @@ class TestStartStop(unittest.TestCase):
 
     def test_start_calls_start_or_run(self):
         self.assertTrue(start_loader(_make_loader(has_start=True)))
+        _state.loader_registry.clear()
         self.assertTrue(start_loader(_make_loader(has_start=False, has_run=True)))
+        _state.loader_registry.clear()
         self.assertFalse(start_loader(_make_loader(has_start=False, has_run=False)))
 
     def test_start_exception_returns_false(self):
@@ -104,28 +105,39 @@ class TestStartStop(unittest.TestCase):
         self.assertFalse(start_loader(l))
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
-    def test_start_and_register(self, _):
+    def test_start_loader(self, _):
         l = _make_loader()
-        self.assertTrue(start_and_register(l, "m"))
-        self.assertIn(l, _state.loaders)
-        self.assertEqual(_loader_module_names[l], "m")
+        self.assertTrue(start_loader(l, "m"))
+        entry = _find_entry(l)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.mod_name, "m")
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
     def test_self_registration(self, _):
         sentinel = MagicMock()
         l = _make_loader()
-        l.start.side_effect = lambda: _state.loaders.append(sentinel)
-        start_and_register(l, "sr")
-        self.assertIn(sentinel, _state.loaders)
-        self.assertNotIn(l, _state.loaders)
+        l.start.side_effect = lambda: _register(sentinel)
+        start_loader(l, "sr")
+        self.assertIsNotNone(_find_entry(sentinel))
+        self.assertIsNone(_find_entry(l))
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
     def test_stop_and_stop_all(self, mock_rm):
         l1, l2 = _make_loader("a"), _make_loader("b")
-        _state.loaders.extend([l1, l2])
+        _register(l1); _register(l2)
         stop_loaders()
-        self.assertEqual(_state.loaders, [])
-        self.assertEqual(mock_rm.call_count, 2)
+        self.assertEqual(_state.loader_registry, [])
+        mock_rm.assert_not_called()
+        l1.stop.assert_called_once()
+        l2.stop.assert_called_once()
+
+    @patch("natlink_compat._callbacks._remove_callbacks_for")
+    def test_unload_all_loaded_modules_does_not_guess_callback_cleanup(self, mock_rm):
+        l = _make_loader("fallback", has_stop=False)
+        l.unload_all_loaded_modules = MagicMock()
+        stop_loader(l)
+        l.unload_all_loaded_modules.assert_called_once()
+        mock_rm.assert_not_called()
 
 
 class TestPublicAPI(unittest.TestCase):
@@ -137,7 +149,7 @@ class TestPublicAPI(unittest.TestCase):
     def test_add_not_connected(self, _):
         l = _make_loader()
         add_loader(l)
-        self.assertIn(l, _state.loaders)
+        self.assertIn(l, get_loaders())
         l.start.assert_not_called()
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
@@ -154,21 +166,21 @@ class TestPublicAPI(unittest.TestCase):
     @patch("natlink_compat._callbacks._remove_callbacks_for")
     def test_add_skips_duplicate(self, _):
         l = _make_loader()
-        _state.loaders.append(l)
+        _register(l)
         add_loader(l)
-        self.assertEqual(_state.loaders.count(l), 1)
+        self.assertEqual(len([e for e in _state.loader_registry if e.loader is l]), 1)
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
     def test_remove(self, _):
         l = _make_loader()
-        _state.loaders.append(l)
+        _register(l)
         remove_loader(l)
-        self.assertNotIn(l, _state.loaders)
+        self.assertNotIn(l, get_loaders())
 
     @patch("natlink_compat._callbacks._remove_callbacks_for")
     def test_reload_trigger_load(self, _):
         l = _make_loader(has_trigger_load=True)
-        _state.loaders.append(l)
+        _register(l)
         reload_loader(l)
         l.trigger_load.assert_called_once_with(force_load=True)
 
@@ -176,7 +188,7 @@ class TestPublicAPI(unittest.TestCase):
     def test_reload_all(self, _):
         l1 = _make_loader("a", has_trigger_load=True)
         l2 = _make_loader("b", has_trigger_load=True)
-        _state.loaders.extend([l1, l2])
+        _register(l1); _register(l2)
         reload_loader(None)
         l1.trigger_load.assert_called_once()
         l2.trigger_load.assert_called_once()
@@ -185,14 +197,11 @@ class TestPublicAPI(unittest.TestCase):
         l = _make_loader()
         register_running_loader(l)
         self.assertEqual(get_loaders(), [l])
-        self.assertIsNot(get_loaders(), _state.loaders)
 
     def test_clear_all(self):
-        _state.loaders.append(_make_loader())
-        _loader_module_names[object()] = "x"
+        _register(_make_loader())
         clear_all()
-        self.assertEqual(_state.loaders, [])
-        self.assertEqual(_loader_module_names, {})
+        self.assertEqual(_state.loader_registry, [])
 
 
 class TestAdoptLoaderLogger(unittest.TestCase):

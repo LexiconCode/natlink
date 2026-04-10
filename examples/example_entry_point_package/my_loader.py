@@ -5,9 +5,9 @@ Install this package with: pip install -e examples/example_entry_point_package
 Natlink discovers it via the "natlink.loaders" entry_points group
 in pyproject.toml. The lifecycle is:
 
-  1. setup() — called before natConnect, set custom UI providers here
-  2. run()   — called during natConnect, register your loader
-  3. stop()  — called during natDisconnect
+  1. setup() — called after import, before natConnect (optional)
+  2. start() — called after COM connection succeeds
+  3. stop()  — called before COM teardown
 
 No manual add_loader() call needed — just pip install and go.
 """
@@ -45,18 +45,16 @@ def setup():
     pass  # This loader uses the default UI
 
 
-def run():
-    """Called during natConnect — register your loader."""
-    import natlink
-
+def start():
+    """Called after COM connection succeeds — start your loader."""
     global _instance
     config_dir = os.path.expanduser("~/.my-natlink-loader")
     _instance = MyLoader(config_dir)
-    natlink.add_loader(_instance)
+    _instance.start()
 
 
 def stop():
-    """Fallback stop — called if natlink stops the module directly."""
+    """Called before COM teardown — stop your loader."""
     global _instance
     if _instance:
         _instance.stop()

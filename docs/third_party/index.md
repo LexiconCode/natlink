@@ -47,7 +47,8 @@ Prefer:
 Avoid:
 
 - importing underscore-prefixed modules as hard dependencies
-- relying on compatibility-only shims unless required for legacy support
+- relying on compatibility-only shims unless required for an existing framework
+  integration
 - coupling to `natlink_ui` implementation details
 
 ## UI Provider Contract
@@ -168,7 +169,7 @@ During shutdown:
 
 - natlink calls `stop()` before COM teardown
 
-Compatibility-only shims still exist for legacy loaders:
+Compatibility-only shims still exist for natlinkcore-style loaders:
 
 - module-level `run()`
 - `trigger_load()`
@@ -176,4 +177,4 @@ Compatibility-only shims still exist for legacy loaders:
 - `natlink.active_loader`
 
 New third-party loaders should not depend on those unless intentionally
-targeting legacy behavior.
+targeting that compatibility contract.
