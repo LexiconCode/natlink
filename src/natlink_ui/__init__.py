@@ -192,11 +192,11 @@ class UIProvider:
         states = natlink_compat.get_loader_states()
         if states:
             loader_items.append(None)
-        for name, _enabled in states:
+        for name, _enabled, _running in states:
             loader_items.append(
                 (name,
                  (lambda n: lambda: natlink_compat.toggle_loader(n))(name),
-                 (lambda n: lambda: dict(natlink_compat.get_loader_states()).get(n, True))(name)))
+                 (lambda n: lambda: {s[0]: s[1] for s in natlink_compat.get_loader_states()}.get(n, True))(name)))
         w.add_submenu("Loaders", loader_items)
 
         w.add_submenu("Configure", [

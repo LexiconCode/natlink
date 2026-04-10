@@ -6,12 +6,8 @@ These are plain functions — UIs call them via ``import natlink_compat``.
 from __future__ import annotations
 
 import logging
-import threading
 
 log = logging.getLogger("natlink.compat")
-
-_loader_states_cache = None
-_loader_cache_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +91,6 @@ def toggle_loader(name: str) -> None:
     INI updates happen immediately; loader start/stop is deferred to the
     main (STA) thread because COM calls must not cross thread boundaries.
     """
-    global _loader_states_cache
     from ._loaders import get_disabled_loaders as _get_disabled_loaders
     from natlink_com._hidden_wnd import push_to_com
     is_disabled = name in _get_disabled_loaders()
@@ -107,7 +102,9 @@ def toggle_loader(name: str) -> None:
         from natlink_com._config import disable_loader
         disable_loader(name)
         push_to_com(_stop_loader_by_name, name)
-    invalidate_loader_cache()
+    # Refresh cached state so the UI sees the INI change immediately.
+    # The deferred COM work will refresh again when it completes.
+    _refresh_loader_states()
 
 
 def _start_loader_by_name(name):
@@ -132,26 +129,35 @@ def _stop_loader_by_name(name):
 
 
 def get_loader_states():
-    """Return list of (name, enabled) tuples for all discovered loaders."""
-    global _loader_states_cache
-    with _loader_cache_lock:
-        if _loader_states_cache is not None:
-            return _loader_states_cache
-        try:
-            from ._loaders import get_all_loader_names, get_disabled_loaders
-            disabled = get_disabled_loaders()
-            result = [(name, name not in disabled)
-                      for name, _ in get_all_loader_names()]
-            _loader_states_cache = result
-            return result
-        except Exception:
-            return []
+    """Return (name, enabled, running) tuples for all discovered loaders.
+
+    Reads from the cached snapshot in _state. If empty (pre-connect),
+    computes fresh.
+    """
+    from ._state import _state
+    cached = _state.last_loader_states
+    if cached:
+        return cached
+    return _compute_loader_states()
 
 
-def invalidate_loader_cache():
-    global _loader_states_cache
-    with _loader_cache_lock:
-        _loader_states_cache = None
+def _compute_loader_states():
+    """Build loader states from INI + runtime."""
+    try:
+        from ._loaders import (get_all_loader_names, get_disabled_loaders,
+                               get_loaders, _loader_base_name)
+        disabled = get_disabled_loaders()
+        running_names = {_loader_base_name(l) for l in get_loaders()}
+        return [(name, name not in disabled, name in running_names)
+                for name, _ in get_all_loader_names()]
+    except Exception:
+        return []
+
+
+def _refresh_loader_states():
+    """Recompute and cache loader states."""
+    from ._state import _state
+    _state.last_loader_states = tuple(_compute_loader_states())
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,17 @@ def _display(text, level=20):
         log.debug("_display failed", exc_info=True)
 
 
+def _on_loaders_changed():
+    """Recompute cached loader states and push to UI."""
+    try:
+        from ._actions import _refresh_loader_states
+        _refresh_loader_states()
+        from ._ui_dispatch import notify_ui
+        notify_ui()
+    except Exception:
+        log.debug("_on_loaders_changed failed", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Naming helpers
 # ---------------------------------------------------------------------------
@@ -208,6 +219,7 @@ def start_and_register(loader, mod_name=""):
             if mod_name:
                 _loader_module_names[loader] = mod_name
             log.info("Loader registered (already running): %s", _loader_name(loader))
+    _on_loaders_changed()
     return True
 
 
@@ -271,6 +283,7 @@ def add_loader(loaders, *, _module_name=""):
             if _module_name:
                 _loader_module_names[loader] = _module_name
         log.info("Loader added: %s", _loader_name(loader))
+        _on_loaders_changed()
 
 
 def remove_loader(loaders):
@@ -285,6 +298,7 @@ def remove_loader(loaders):
                 _state.loaders.remove(loader)
             _loader_module_names.pop(loader, None)
         log.info("Loader removed: %s", _loader_name(loader))
+    _on_loaders_changed()
 
 
 def reload_loader(loaders=None):
@@ -339,6 +353,7 @@ def reload_loader(loaders=None):
         else:
             log.warning("Cannot reload %s: no module name known",
                         _loader_name(target))
+    _on_loaders_changed()
 
 
 def register_running_loader(loader):
@@ -348,6 +363,7 @@ def register_running_loader(loader):
             return
         _state.loaders.append(loader)
     log.info("Loader registered (already running): %s", _loader_name(loader))
+    _on_loaders_changed()
 
 
 def get_loaders():

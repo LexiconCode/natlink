@@ -47,7 +47,7 @@ class NatlinkState:
     user_name: str = ""
     user_directory: str = ""
     dragon_version: Tuple[int, int, int] = (0, 0, 0)
-    loaders: Tuple[str, ...] = ()  # names of discovered loaders
+    loader_states: Tuple[Tuple[str, bool, bool], ...] = ()  # (name, enabled, running)
     error_message: str = ""
 
 

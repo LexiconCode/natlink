@@ -25,7 +25,7 @@ def build_state_snapshot() -> NatlinkState:
         mic = _state.last_mic_state
         user = _state.last_user_name
         user_dir = _state.last_user_dir
-        loader_list = list(_state.loaders)
+        loader_states = _state.last_loader_states
 
     version = (0, 0, 0)
     if backend is not None:
@@ -34,14 +34,6 @@ def build_state_snapshot() -> NatlinkState:
         except Exception:
             pass
 
-    try:
-        loaders = tuple(
-            getattr(mod, "__name__", str(mod))
-            for mod in loader_list
-        )
-    except Exception:
-        loaders = ()
-
     return NatlinkState(
         connected=connected,
         phase=phase,
@@ -49,7 +41,7 @@ def build_state_snapshot() -> NatlinkState:
         user_name=user,
         user_directory=user_dir,
         dragon_version=version,
-        loaders=loaders,
+        loader_states=loader_states,
         error_message=error_msg,
     )
 

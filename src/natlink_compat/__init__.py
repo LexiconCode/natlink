@@ -17,7 +17,7 @@ from ._ui_protocol import (UIProvider, NatlinkState,
     PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING, PHASE_ERROR)
 from ._actions import (
     is_dragon_running, start_dragon, stop_dragon, restart_dragon, dragon_status,
-    reload_grammars, toggle_loader, get_loader_states, invalidate_loader_cache,
+    reload_grammars, toggle_loader, get_loader_states,
     toggle_auto_launch, is_auto_launch_enabled,
     set_log_level, get_log_level,
     set_mic, exit_natlink,

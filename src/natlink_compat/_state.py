@@ -45,6 +45,7 @@ class _NatlinkState:
         self._last_mic_state: str = ""
         self._last_user_name: str = ""
         self._last_user_dir: str = ""
+        self._last_loader_states: tuple = ()  # (name, enabled, running) tuples
 
         # Global callback stacks — multiple loaders can each register one.
         self.begin_callbacks: List[Callable] = []
@@ -157,6 +158,14 @@ class _NatlinkState:
     def last_user_dir(self, value: str):
         self._last_user_dir = value
 
+    @property
+    def last_loader_states(self) -> tuple:
+        return self._last_loader_states
+
+    @last_loader_states.setter
+    def last_loader_states(self, value: tuple):
+        self._last_loader_states = value
+
     def cache_user_state(self, mic: str, user: str, user_dir: str):
         """Cache mic/user state for UI snapshots."""
         self._last_mic_state = mic
@@ -184,6 +193,7 @@ class _NatlinkState:
         self._last_mic_state = ""
         self._last_user_name = ""
         self._last_user_dir = ""
+        self._last_loader_states = ()
         if self._conn_mutex:
             import ctypes
             ctypes.windll.kernel32.CloseHandle(self._conn_mutex)
