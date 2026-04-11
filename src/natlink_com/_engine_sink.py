@@ -18,23 +18,30 @@ import time as _time
 
 from ._com_helpers import get_dragon_error_message as _get_dragon_error_message
 from ._dspeech_constants import (
-    DGNSRAC_MICSTATE, DGNSRAC_PLAYBACKDONE,
+    DGNSRAC_MICSTATE, DGNSRAC_REGISTRY,
+    DGNSRAC_PLAYBACKDONE, DGNSRAC_TOPIC,
     DGNSRAC_LEXADD, DGNSRAC_LEXREMOVE,
     DGNSRSINKFLAG_SENDATTRIB,
     DGNSRSINKFLAG_SENDJITPAUSED,
     DGNSRSINKFLAG_SENDMIMICDONE,
 )
+from ._speech_constants import ISRNSAC_SPEAKER
 
-log = logging.getLogger("natlink.callbacks")
+# Logged at INFO (others at DEBUG) so operators can correlate Dragon's
+# emission count against outgoing SetMicState / Select user calls.
+_STATE_CHANGE_CODES = frozenset((DGNSRAC_MICSTATE, ISRNSAC_SPEAKER))
+
+log = logging.getLogger("natlink.com.sink.engine")
+_attrib_log = logging.getLogger("natlink.com.sink.engine.attrib_changed")
 _kernel32 = ctypes.windll.kernel32
 
 _ATTRIB_NAMES = {
     DGNSRAC_MICSTATE: "MICSTATE",            # 1001
+    DGNSRAC_REGISTRY: "REGISTRY",            # 1002
     DGNSRAC_PLAYBACKDONE: "PLAYBACKDONE",    # 1003
+    DGNSRAC_TOPIC: "TOPIC",                  # 1004
     DGNSRAC_LEXADD: "VOCAB_CHANGED",         # 1005
     DGNSRAC_LEXREMOVE: "VOCAB_DONE",         # 1006
-    1009: "USER_CHANGED",
-    1013: "TOPIC_CHANGED",
 }
 
 # Sink flags — imported above from _dspeech_constants.
@@ -77,7 +84,7 @@ def _build_sink_class():
             #       DGNSRSINKFLAG_SENDJITPAUSED |  // send just-in-time paused before grammars are loaded
             #       DGNSRSINKFLAG_SENDATTRIB |     // send AttribChanged messages
             #       DGNSRSINKFLAG_SENDMIMICDONE;   // send MimicDone message
-            log.debug("SinkFlagsGet called")
+            log.info("SinkFlagsGet: ATTRIB|JITPAUSED|MIMICDONE")
             return (DGNSRSINKFLAG_SENDATTRIB |
                     DGNSRSINKFLAG_SENDJITPAUSED |
                     DGNSRSINKFLAG_SENDMIMICDONE)
@@ -85,8 +92,11 @@ def _build_sink_class():
         # --- IDgnSREngineNotifySinkW ---
 
         def IDgnSREngineNotifySinkW_AttribChanged2(self, dwCode):
-            log.debug("AttribChanged2(%d=%s)", dwCode,
-                      _ATTRIB_NAMES.get(dwCode, "?"))
+            name = _ATTRIB_NAMES.get(dwCode, "?")
+            if dwCode in _STATE_CHANGE_CODES:
+                _attrib_log.info("← AttribChanged2(%d=%s)", dwCode, name)
+            else:
+                _attrib_log.debug("← AttribChanged2(%d=%s)", dwCode, name)
             # C++ CDgnSRNotifySink::AttribChanged2 (DragonCode.cpp):
             #   m_pParent->postMessage( WM_ATTRIBCHANGED, dwCode, 0 );
             # Posts ALL attrib changes with dwCode as wParam — including

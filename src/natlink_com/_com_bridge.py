@@ -130,6 +130,7 @@ class NatlinkCOM:
         if code is None:
             raise NatlinkCOMError("set_mic_state",
                                   error_message=f"Invalid parameter '{state}' (calling setMicState)")
+        log.info("→ SetMicState(%s)", state)
         ctl.SetMicState(code, 0)  # FALSE = don't persist
         pump()
 

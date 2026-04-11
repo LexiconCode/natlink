@@ -113,7 +113,7 @@ def select_user(conn, user: str) -> None:
             raise NatlinkCOMError("select_user", error_type=8,
                 error_message=f"The user name '{user}' is invalid") from exc
         raise
-    log.debug("Selected user: %s", user)
+    log.info("→ Select user: %s", user)
 
 
 def create_user(conn, name: str, model: str = "", topic: str = "") -> None:
