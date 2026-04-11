@@ -512,6 +512,7 @@ def _on_attrib_changed(dwCode):
             mic = _state.backend.get_mic_state()
         except Exception:
             log.debug("Could not get mic state for AttribChanged", exc_info=True)
+        log.getChild("change").info("mic state → %s", mic)
         if mic != _state.last_mic_state:
             _state.last_mic_state = mic
             from ._ui_dispatch import notify_ui
