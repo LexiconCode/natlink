@@ -245,6 +245,8 @@ class ComGramObj:
         rule = rule_name if rule_name else None
         try:
             self._gram_common.Activate(hwnd, False, rule)
+            log.debug("activate(handle=%d, rule=%r, hwnd=0x%X)",
+                      self._handle, rule_name, hwnd)
         except Exception as exc:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_INVALIDRULE:
@@ -276,6 +278,8 @@ class ComGramObj:
             raise NatlinkCOMError("deactivate", error_message="Grammar not loaded")
         try:
             self._gram_common.Deactivate(rule_name)
+            log.debug("deactivate(handle=%d, rule=%r)",
+                      self._handle, rule_name)
         except Exception as exc:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_RULENOTACTIVE:

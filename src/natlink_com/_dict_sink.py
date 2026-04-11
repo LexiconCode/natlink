@@ -15,7 +15,10 @@ both when a \"Scratch That\" command occurs."
 import ctypes
 import logging
 
-log = logging.getLogger("natlink.callbacks")
+log = logging.getLogger("natlink.com.sink.dict")
+# Per-edit text change events fire on every keystroke-equivalent; route
+# them through a child logger so they can be silenced independently.
+_text_log = log.getChild("text_changed")
 
 from ._com_helpers import get_dragon_error_message as _get_dragon_error_message
 from ._dspeech_constants import (
@@ -75,7 +78,7 @@ def _build_sink_class():
             # selection to change within the internal buffer without a
             # corresponding change in the text."
             # — Joel Gould, DictationObject.cpp (CVDct0NotifySink::TextSelChanged)
-            log.debug("TextSelChanged(handle=%d)", self._dict_handle)
+            _text_log.debug("TextSelChanged(handle=%d)", self._dict_handle)
             try:
                 self._handle_text_sel_changed()
             except Exception:
@@ -90,7 +93,7 @@ def _build_sink_class():
             # "We ignore the reason code.  It is not set by NatSpeak"
             # — Joel Gould, DictationObject.cpp (CVDct0NotifySink::TextChanged,
             #   CDictationObject::TextChanged)
-            log.debug("TextChanged(reason=%d, handle=%d)", dwReason, self._dict_handle)
+            _text_log.debug("TextChanged(reason=%d, handle=%d)", dwReason, self._dict_handle)
             try:
                 self._handle_text_changed()
             except Exception:
@@ -138,9 +141,9 @@ def _build_sink_class():
         def IDgnVDctNotifySink_ErrorHappened(self, p0):
             msg = _get_dragon_error_message(p0)
             if msg:
-                log.warning("DictSink ErrorHappened: %s", msg)
+                log.error("DictSink ErrorHappened: %s", msg)
             else:
-                log.warning("DictSink ErrorHappened")
+                log.error("DictSink ErrorHappened")
             return 0
 
         def IDgnVDctNotifySink_WarningHappened(self, p0):

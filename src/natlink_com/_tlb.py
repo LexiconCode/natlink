@@ -18,7 +18,7 @@ No circular-import risk — ``_config.py`` has no dependency on ``_tlb.py``.
 
 import logging
 
-log = logging.getLogger("natlink.com.conn")
+log = logging.getLogger("natlink.com.tlb")
 
 _tlb_mod = None
 _tlb_variant = None  # "v13_v14" or "v15_v16"
@@ -64,10 +64,13 @@ def load_tlb(version_hint=None):
         except Exception:
             major = 0
 
+    log.info("Loading TLB wrappers (Dragon major=%d, hint=%s)",
+             major or 0, version_hint)
     mod, variant = _pick_variant(major)
 
     # Already loaded the correct variant — no-op
     if variant == _tlb_variant:
+        log.debug("TLB variant %s already loaded — no-op", variant)
         return _tlb_mod
 
     # Switching variants after initial load (shouldn't happen in production)
@@ -77,6 +80,6 @@ def load_tlb(version_hint=None):
 
     _tlb_mod = mod
     _tlb_variant = variant
-    log.debug("Loaded vendored TLB wrappers: %s (Dragon %d)",
-              variant, major or 0)
+    log.info("Loaded vendored TLB wrappers: %s (Dragon %d)",
+             variant, major or 0)
     return _tlb_mod

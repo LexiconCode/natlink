@@ -124,10 +124,12 @@ def register_marshaling(dragon_major: int = 0,
     """
     _require_64bit_python()
 
+    log.info("Registering marshal DLLs for Dragon v%d", dragon_major)
+
     if dll_path is None:
         dll_path = _find_dll(64, dragon_major)
 
-    log.debug("Loading marshal DLL: %s", dll_path)
+    log.info("Loading marshal DLL: %s", dll_path)
     hmod = kernel32.LoadLibraryW(dll_path)
     if not hmod:
         raise OSError(f"LoadLibrary failed for {dll_path}: error {ctypes.get_last_error()}")
@@ -167,8 +169,8 @@ def register_marshaling(dragon_major: int = 0,
             registered += 1
         else:
             failed.append(name)
-    log.debug("Registered %d/%d marshal interfaces (64-bit, per-process)",
-              registered, len(MARSHAL_INTERFACES))
+    log.info("Registered %d/%d marshal interfaces (64-bit, per-process)",
+             registered, len(MARSHAL_INTERFACES))
     if failed:
         log.warning("Marshal registration failed for: %s", ", ".join(failed))
 
