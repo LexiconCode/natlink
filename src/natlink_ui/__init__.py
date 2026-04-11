@@ -164,6 +164,87 @@ class UIProvider:
     def _toggle_topmost(self):
         self._window.set_topmost(not self._window.is_topmost)
 
+    # --- Logging submenu ---------------------------------------------------
+
+    @staticmethod
+    def _category_group(name: str) -> str:
+        """Return the display group for a logging category."""
+        if name == "natlink":
+            return "Root"
+        if name == "natlink.com.sink" or name.startswith("natlink.com.sink."):
+            return "Sinks"
+        if name == "natlink.com" or name.startswith("natlink.com."):
+            return "COM"
+        if name == "natlink.callbacks" or name.startswith("natlink.callbacks."):
+            return "Callbacks"
+        if name == "natlink.compat" or name.startswith("natlink.compat."):
+            return "Compat"
+        if name == "natlink.ui" or name.startswith("natlink.ui."):
+            return "UI"
+        return "Other"
+
+    @staticmethod
+    def _current_cat_level(name: str) -> str:
+        """Return current client level string for a category (or '')."""
+        cat = natlink_compat.get_log_category(name)
+        return cat["client"] if cat else ""
+
+    def _build_logging_submenu(self):
+        """Build the nested Logging submenu: Reset / Presets / Categories."""
+        cats = natlink_compat.list_log_categories()
+        presets = natlink_compat.list_log_presets()
+
+        preset_items = [
+            (p["label"],
+             (lambda pid=p["id"]: lambda: natlink_compat.apply_log_preset(pid))(),
+             None)
+            for p in presets
+        ]
+
+        level_names = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+        # Group categories by display bucket, preserving declaration order
+        groups: dict = {
+            "Root": [], "COM": [], "Sinks": [], "Callbacks": [],
+            "Compat": [], "UI": [], "Other": [],
+        }
+        for cat in cats:
+            groups[self._category_group(cat["name"])].append(cat)
+
+        group_menus = []
+        for group_label, group_cats in groups.items():
+            if not group_cats:
+                continue
+            cat_items = []
+            for cat in group_cats:
+                name = cat["name"]
+                lvl_items = [
+                    (lvl,
+                     (lambda n=name, l=lvl:
+                        lambda: natlink_compat.set_log_level(n, l))(),
+                     (lambda n=name, l=lvl:
+                        lambda: self._current_cat_level(n) == l)())
+                    for lvl in level_names
+                ]
+                lvl_items.append(None)
+                lvl_items.append((
+                    "Reset",
+                    (lambda n=name:
+                        lambda: natlink_compat.reset_log_level(n))(),
+                    None,
+                ))
+                cat_items.append(("submenu", name, lvl_items))
+            group_menus.append(("submenu", group_label, cat_items))
+
+        return [
+            ("Reset all overrides",
+             lambda: natlink_compat.reset_log_levels(), None),
+            None,
+            ("submenu", "Presets", preset_items),
+            None,
+            *group_menus,
+        ]
+
     def _build_menu(self):
         w = self._window
 
@@ -179,12 +260,7 @@ class UIProvider:
             ("Natlink Log", self._open_natlink_log, None),
             ("Dragon Log", self._open_dragon_log, None),
             None,
-            ("submenu", "Natlink Level", [
-                ("DEBUG", lambda: natlink_compat.set_log_level(logging.DEBUG), lambda: natlink_compat.get_log_level() == logging.DEBUG),
-                ("INFO", lambda: natlink_compat.set_log_level(logging.INFO), lambda: natlink_compat.get_log_level() == logging.INFO),
-                ("WARNING", lambda: natlink_compat.set_log_level(logging.WARNING), lambda: natlink_compat.get_log_level() == logging.WARNING),
-                ("ERROR", lambda: natlink_compat.set_log_level(logging.ERROR), lambda: natlink_compat.get_log_level() == logging.ERROR),
-            ]),
+            ("submenu", "Logging", self._build_logging_submenu()),
         ])
 
         w.add_separator()
@@ -357,7 +433,6 @@ def cli_main() -> None:
 def main():
     """GUI entry point for natlink-ui. No console window."""
     import argparse
-    import ctypes
 
     parser = argparse.ArgumentParser(prog="natlink-ui")
     parser.add_argument("--install-shortcuts", action="store_true",
@@ -367,13 +442,6 @@ def main():
     parser.add_argument("--keep-config", action="store_true")
     args, _unknown = parser.parse_known_args()
 
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
     import natlink_compat
     if args.uninstall:
         raise SystemExit(uninstall_ui(remove_config=not args.keep_config))
@@ -392,6 +460,4 @@ def main():
         natlink_compat.configure()
         natlink_compat.run()
     except Exception:
-        import traceback
-        from ._win32 import msgbox, MB_ICONERROR
-        msgbox(traceback.format_exc(), "Natlink — Failed to start", MB_ICONERROR)
+        log.exception("Natlink failed")
