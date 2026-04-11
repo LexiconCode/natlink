@@ -28,7 +28,7 @@ from natlink_com._launcher import (
 )
 from natlink_com._win32 import kernel32
 
-log = logging.getLogger("natlink.com.launcher")
+log = logging.getLogger("natlink.compat.launcher")
 
 ole32 = ctypes.windll.ole32
 

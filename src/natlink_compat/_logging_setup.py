@@ -25,19 +25,64 @@ _D = logging.DEBUG
 _LEVEL_MAP = {1: logging.ERROR, 2: _W, 3: _I, 4: _D, 5: _D}
 
 # (client_level, file_level) — client = message window, file = rotating log
+#
+# Taxonomy by layer in the COM flow:
+#   natlink.com.*         — COM backend: connection, TLB, marshal, results parsing
+#   natlink.com.sink.*    — inbound notifications *from* Dragon (producer side)
+#   natlink.callbacks.*   — dispatch *to* user Python callbacks (consumer side)
+#   natlink.compat.*      — compat-layer glue (state, orchestration, ui dispatch)
+#   natlink.ui.*          — tray window, shortcuts, UI config
+#
+# High-frequency children are pinned to INFO in the file log so normal
+# operation stays legible.  Slow-callback warnings still propagate up.
+# Bump any of them to DEBUG via [Logging.Levels] in natlink.ini to
+# investigate a specific event.
 _default_levels: Dict[str, Tuple[int, int]] = {
-    "natlink":               (_W, _I),
-    "natlink.callbacks":     (_W, _D),
-    "natlink.com":           (_W, _D),
-    "natlink.com.conn":      (_I, _D),
-    "natlink.com.grammar":   (_W, _I),
-    "natlink.com.dictation": (_W, _I),
-    "natlink.com.results":   (_W, _I),
-    "natlink.com.marshal":   (_I, _I),
-    "natlink.com.lexicon":   (_W, _I),
-    "natlink.com.launcher":  (_I, _I),
-    "natlink.compat":        (_W, _I),
-    "natlink.compat.tray":   (_W, _I),
+    "natlink":                                  (_W, _I),
+
+    # COM backend — infrastructure, connection, type library, marshaling
+    "natlink.com":                              (_W, _D),
+    "natlink.com.conn":                         (_I, _D),
+    "natlink.com.tlb":                          (_W, _I),
+    "natlink.com.grammar":                      (_W, _I),
+    "natlink.com.dictation":                    (_W, _I),
+    "natlink.com.results":                      (_W, _I),
+    "natlink.com.marshal":                      (_I, _I),
+    "natlink.com.lexicon":                      (_W, _I),
+    "natlink.com.launcher":                     (_I, _I),
+    "natlink.com.dragon":                       (_W, _I),
+    "natlink.com.sendinput":                    (_W, _I),
+    "natlink.com.pump":                         (_W, _I),
+    "natlink.com.timer":                        (_W, _I),  # WM_TIMER fires
+
+    # COM sinks — raw notifications arriving from Dragon
+    "natlink.com.sink":                         (_W, _D),
+    "natlink.com.sink.grammar":                 (_W, _D),
+    "natlink.com.sink.grammar.hypothesis":      (_W, _I),  # per-partial
+    "natlink.com.sink.dict":                    (_W, _D),
+    "natlink.com.sink.dict.text_changed":       (_W, _I),  # per-edit
+    "natlink.com.sink.engine":                  (_W, _D),
+    "natlink.com.sink.engine.attrib_changed":   (_W, _I),  # MICSTATE etc., idle-chatty
+    "natlink.com.sink.action":                  (_W, _D),
+
+    # Compat dispatch — delivering events to user Python callbacks
+    "natlink.callbacks":                        (_W, _D),
+    "natlink.callbacks.timer":                  (_W, _I),  # ~60Hz poll
+    "natlink.callbacks.begin":                  (_W, _I),  # per-utterance
+    "natlink.callbacks.grammar_begin":          (_W, _I),  # N grammars × utterance
+    "natlink.callbacks.phrase_finish":          (_W, _I),  # per-utterance
+    "natlink.callbacks.phrase_hypothesis":      (_W, _I),  # per-partial
+    "natlink.callbacks.change":                 (_W, _I),  # mic/user state
+    "natlink.callbacks.dict_begin":             (_W, _I),  # per-dictation-begin
+    "natlink.callbacks.dict_text_changed":      (_W, _I),  # per-edit
+
+    # Compat layer — state, orchestration, loaders, UI dispatch
+    "natlink.compat":                           (_W, _I),
+    "natlink.compat.launcher":                  (_I, _I),
+    "natlink.compat.loaders":                   (_I, _I),
+
+    # UI layer — tray window, shortcuts, config (children propagate up)
+    "natlink.ui":                               (_W, _I),
 }
 
 _FILE_FORMAT = (

@@ -9,7 +9,10 @@ Created per-grammar and passed to ISRCentralW::GrammarLoad.
 
 import logging
 
-log = logging.getLogger("natlink.callbacks")
+log = logging.getLogger("natlink.com.sink.grammar")
+# Partial-result hypothesis fires several times per utterance; route it
+# through a child logger so it can be silenced independently.
+_hypo_log = log.getChild("hypothesis")
 
 # Grammar sink flags — imported from _dspeech_constants.
 # SENDPHRASEFINISH    — "send PhraseFinish for our grammar"
@@ -152,7 +155,7 @@ def _build_sink_class():
             # "Note that a results object is not available." for hypothesis
             # callbacks — only words are passed, no IUnknown.
             # — Joel Gould, GrammarObject.cpp (CSRGramNotifySink::PhraseHypothesis)
-            log.debug("PhraseHypothesis(flags=0x%x, handle=%d)", dwFlags, self._gram_handle)
+            _hypo_log.debug("PhraseHypothesis(flags=0x%x, handle=%d)", dwFlags, self._gram_handle)
 
             # "do nothing if the recognition is being rejected"
             # — Joel Gould, GrammarObject.cpp (CGrammarObject::PhraseHypothesis)

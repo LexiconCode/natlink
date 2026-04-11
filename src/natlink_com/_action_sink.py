@@ -21,7 +21,7 @@ formatted error string and pass the stash key instead.
 
 import logging
 
-log = logging.getLogger("natlink.callbacks")
+log = logging.getLogger("natlink.com.sink.action")
 
 from ._com_helpers import lazy_com_factory
 

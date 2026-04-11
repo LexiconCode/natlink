@@ -16,7 +16,7 @@ from typing import List
 from ._logging_setup import _NotifyTextHandler
 from ._state import _state
 
-log = logging.getLogger("natlink.compat")
+log = logging.getLogger("natlink.compat.loaders")
 
 
 @dataclass

@@ -30,11 +30,18 @@ from natlink_com._speech_constants import (
 
 @contextmanager
 def _callback_trace(name):
-    """Context manager that traces callback entry/exit with timing."""
+    """Context manager that traces callback entry/exit with timing.
+
+    Enter/exit debug lines go to a per-name child logger (e.g.
+    ``natlink.callbacks.timer``) so high-frequency callbacks can be
+    silenced independently via [Logging.Levels] in natlink.ini.
+    Slow-callback warnings stay on the parent logger.
+    """
     _state.callback_depth += 1
     depth = _state.callback_depth
     t0 = time.perf_counter()
-    log.debug("[%s] enter (depth=%d)", name, depth)
+    child = log.getChild(name)
+    child.debug("[%s] enter (depth=%d)", name, depth)
     try:
         yield
     finally:
@@ -46,8 +53,8 @@ def _callback_trace(name):
             log.warning("[%s] SLOW exit (%.1fms > %dms, depth=%d)",
                         name, elapsed_ms, threshold, new_depth)
         else:
-            log.debug("[%s] exit (%.1fms, depth=%d)",
-                      name, elapsed_ms, new_depth)
+            child.debug("[%s] exit (%.1fms, depth=%d)",
+                        name, elapsed_ms, new_depth)
         # Replay deferred change callbacks when outermost callback exits.
         # C++ replays BOTH pending speaker and pending mic changes
         # independently (they're separate bits in m_dwPendingCallback).

@@ -19,7 +19,7 @@ import ctypes.wintypes as wt
 import itertools as _itertools
 import logging
 
-log = logging.getLogger("natlink.com")
+log = logging.getLogger("natlink.com.pump")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32

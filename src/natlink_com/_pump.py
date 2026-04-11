@@ -96,7 +96,8 @@ import time
 
 from ._win32 import user32 as _user32, kernel32 as _kernel32
 
-log = logging.getLogger("natlink.com")
+log = logging.getLogger("natlink.com.pump")
+_timer_log = logging.getLogger("natlink.com.timer")
 
 _QS_ALLINPUT = 0x04FF
 _PM_REMOVE = 0x0001
@@ -401,18 +402,23 @@ def set_timer(interval_ms: int, callback) -> int:
     hwnd = _hidden_wnd.hwnd() or 0
     _active_timer_id = _user32.SetTimer(hwnd, _TIMER_ID, interval_ms, None)
     if not _active_timer_id:
-        log.error("SetTimer failed: %d", _kernel32.GetLastError())
+        _timer_log.error("SetTimer failed: %d", _kernel32.GetLastError())
+    else:
+        _timer_log.info("Win32 timer installed: id=%d, interval=%dms",
+                        _active_timer_id, interval_ms)
     return _active_timer_id
 
 
 def _on_wm_timer(wp, lp):
     """WM_TIMER handler — matches C++ hiddenWndProc WM_TIMER case."""
     cb = _timer_callback
-    if cb is not None:
-        try:
-            cb()
-        except Exception:
-            log.debug("Timer callback error", exc_info=True)
+    if cb is None:
+        return
+    _timer_log.debug("WM_TIMER fired")
+    try:
+        cb()
+    except Exception:
+        _timer_log.exception("Timer callback error")
 
 
 def kill_timer() -> None:
@@ -424,5 +430,6 @@ def kill_timer() -> None:
     if _active_timer_id:
         from . import _hidden_wnd
         _user32.KillTimer(_hidden_wnd.hwnd() or 0, _active_timer_id)
+        _timer_log.info("Win32 timer killed: id=%d", _active_timer_id)
         _active_timer_id = 0
         _timer_callback = None
