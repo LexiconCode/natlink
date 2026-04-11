@@ -81,7 +81,7 @@ To issue commands back into natlink, import the module directly:
 ```python
 import natlink_compat
 natlink_compat.restart_dragon()
-natlink_compat.set_log_level(10)
+natlink_compat.set_log_level("natlink.com.grammar", "DEBUG")
 natlink_compat.reload_grammars()
 ```
 

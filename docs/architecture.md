@@ -90,7 +90,7 @@ Engine pushes:   natlink_compat  ──on_state_changed──▶  UIProvider
                  natlink_compat  ──on_text(text,level)──▶  UIProvider
 
 UI commands:     UIProvider  ──import natlink_compat──▶  natlink_compat.restart_dragon()
-                                                         natlink_compat.set_log_level(10)
+                                                         natlink_compat.set_log_level("natlink.com.grammar", "DEBUG")
                                                          natlink_compat.reload_grammars()
                                                          ...plain functions
 ```

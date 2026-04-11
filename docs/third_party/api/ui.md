@@ -85,13 +85,29 @@ providers.
 
 ::: natlink.get_loader_states
 
+### `list_log_categories`
+
+::: natlink.list_log_categories
+
 ### `set_log_level`
 
 ::: natlink.set_log_level
 
-### `get_log_level`
+### `reset_log_level`
 
-::: natlink.get_log_level
+::: natlink.reset_log_level
+
+### `reset_log_levels`
+
+::: natlink.reset_log_levels
+
+### `list_log_presets`
+
+::: natlink.list_log_presets
+
+### `apply_log_preset`
+
+::: natlink.apply_log_preset
 
 ### `set_mic`
 
