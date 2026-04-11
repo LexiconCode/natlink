@@ -19,9 +19,13 @@ from ._actions import (
     is_dragon_running, start_dragon, stop_dragon, restart_dragon, dragon_status,
     reload_grammars, toggle_loader, get_loader_states,
     toggle_auto_launch, is_auto_launch_enabled,
-    set_log_level, get_log_level,
     set_mic, exit_natlink,
     stop_provider,
+)
+from ._logging_control import (
+    list_log_categories, get_log_category,
+    set_log_level, reset_log_level, reset_log_levels,
+    list_log_presets, apply_log_preset,
 )
 from ._speech import playString, playEvents, execScript, recognitionMimic
 from ._ui_dispatch import notify_text
@@ -177,7 +181,9 @@ __all__ = [
     "is_dragon_running", "start_dragon", "stop_dragon", "restart_dragon",
     "reload_grammars", "toggle_loader", "get_loader_states",
     "toggle_auto_launch", "is_auto_launch_enabled",
-    "set_log_level", "get_log_level",
+    "list_log_categories", "get_log_category",
+    "set_log_level", "reset_log_level", "reset_log_levels",
+    "list_log_presets", "apply_log_preset",
     "set_mic", "exit_natlink",
     "PHASE_IDLE", "PHASE_WAITING_FOR_DRAGON", "PHASE_CONNECTING",
     "PHASE_LOADING_PROFILE", "PHASE_CONNECTED", "PHASE_RESTARTING", "PHASE_ERROR",

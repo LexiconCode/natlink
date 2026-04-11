@@ -176,35 +176,6 @@ def is_auto_launch_enabled() -> bool:
     return get_bool_setting("settings", "auto_launch_dragon", fallback=False)
 
 
-def set_log_level(level: int) -> None:
-    """Set natlink's log level (runtime + INI)."""
-    from ._logging_setup import _log_root, _notify_handler
-    _log_root.setLevel(level)
-    if _notify_handler is not None:
-        _notify_handler.setLevel(level)
-    from natlink_com._config import load_config, save_config
-    cfg = load_config()
-    if not cfg.has_section("Logging"):
-        cfg.add_section("Logging")
-    cfg.set("Logging", "ClientLevel", logging.getLevelName(level))
-    save_config(cfg)
-
-
-def get_log_level() -> int:
-    """Get current natlink log level (from INI, falling back to runtime)."""
-    from natlink_com._config import load_config
-    cfg = load_config()
-    try:
-        raw = cfg.get("Logging", "ClientLevel", fallback="")
-        if raw.strip():
-            from ._logging_setup import _parse_level, _W
-            return _parse_level(raw, _W)
-    except Exception:
-        pass
-    from ._logging_setup import _log_root
-    return _log_root.level
-
-
 # ---------------------------------------------------------------------------
 # Mic / shutdown
 # ---------------------------------------------------------------------------

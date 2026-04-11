@@ -165,6 +165,12 @@ _file_handler: Optional[RotatingFileHandler] = None
 _notify_handler: Optional[_NotifyTextHandler] = None
 _installed_loggers: list = []
 
+# (logger, client_filter, file_filter) per category — in-place mutation
+# target for _logging_control.set_log_level.
+_category_registry: Dict[str, Tuple[
+    logging.Logger, "_NameLevelFilter", "_NameLevelFilter"
+]] = {}
+
 # Saved originals for stdout/stderr redirect undo
 _original_stdout = None
 _original_stderr = None
@@ -317,6 +323,7 @@ def _remove_handlers():
         logger.setLevel(logging.NOTSET)
         logger.propagate = True
     _installed_loggers = []
+    _category_registry.clear()
 
 
 def _setup_logging_and_redirect():
@@ -378,12 +385,16 @@ def _setup_logging_and_redirect():
                 logger.setLevel(min(client_level, file_level))
                 logger.propagate = False
 
+                client_filter = _NameLevelFilter(name, client_level)
+                file_filter = _NameLevelFilter(name, file_level)
+
                 dispatch = _DispatchingHandler()
-                dispatch.add_target(nh, _NameLevelFilter(name, client_level))
-                dispatch.add_target(fh, _NameLevelFilter(name, file_level))
+                dispatch.add_target(nh, client_filter)
+                dispatch.add_target(fh, file_filter)
                 logger.addHandler(dispatch)
 
                 _installed_loggers.append(name)
+                _category_registry[name] = (logger, client_filter, file_filter)
 
         except Exception:
             import traceback
