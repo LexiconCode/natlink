@@ -39,7 +39,6 @@ exe_path = C:\Program Files (x86)\Nuance\NaturallySpeaking13\Program\natspeak.ex
 
 [Launch]
 python = C:\path\to\venv\Scripts\pythonw.exe
-tray_exe = C:\path\to\venv\Scripts\natlink-tray.exe
 
 [settings]
 auto_launch_dragon = false

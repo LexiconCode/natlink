@@ -57,7 +57,7 @@ re-exports the compatibility layer and preserves the legacy
 
 Owns the compatibility API: module-level functions, `GramObj`/`ResObj`/`DictObj`,
 exceptions, loader registration helpers, and the UI provider dispatch.
-Also owns the CLI (`_cli.py`), the launcher orchestrator (`_orchestrator.py`),
+Also owns the CLI (`_cli.py`), the launcher (`_launcher.py`),
 and action functions (`_actions.py`).
 
 ### `natlink_com`
