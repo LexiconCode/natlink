@@ -41,6 +41,7 @@ dev = [
     "pytest >=9.0.2",
     "pytest-cov >=6.0",
     "black >= 24.0",
+    "import-linter >= 2.0",
     "mkdocs >= 1.6, < 2",
     "mkdocstrings[python] >= 1.0",
     "pyenvutils",
@@ -101,4 +102,21 @@ show_missing = true
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
+]
+
+[tool.importlinter]
+root_packages = ["natlink_com", "natlink_compat", "natlink_ui"]
+
+[[tool.importlinter.contracts]]
+name = "Three-layer direction (com does not import compat or ui; compat does not import ui)"
+type = "layers"
+layers = [
+    "natlink_ui",
+    "natlink_compat",
+    "natlink_com",
+]
+ignore_imports = [
+    # Dev-only fallback when running from a source checkout without entry-point registration.
+    # Production installs discover UIProvider via `natlink.ui_provider` entry point.
+    "natlink_compat._launcher -> natlink_ui",
 ]
