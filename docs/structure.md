@@ -18,9 +18,8 @@ natlink/
 |   |   +-- _state.py              # Global connection state; Win32 disconnect event handle
 |   |   +-- _loaders.py            # Loader registry, discovery, and lifecycle
 |   |   +-- _loader_protocol.py    # LoaderProtocol (runtime-checkable)
-|   |   +-- _ui_protocol.py        # UIProvider protocol, NatlinkState dataclass, phase constants
-|   |   +-- _ui_dispatch.py        # notify_ui(), notify_text(), set_phase()
-|   |   +-- _launcher.py           # Phase-structured launcher (6 phases); LauncherSession + events + pump_until_stopped
+|   |   +-- _ui_protocol.py        # UIProvider protocol, NatlinkState, phase constants, dispatch helpers (set_phase, notify_ui, notify_text)
+|   |   +-- _launcher.py           # Launcher class (event handles + monitor), run(), _wait_and_connect, _pump_loop, _teardown
 |   |   +-- _playstring.py         # playString / playEvents helpers
 |   |   +-- _speech.py             # Speech-related functions (mic, mimic, etc.)
 |   |   +-- _users.py              # User management functions
