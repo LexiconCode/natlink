@@ -1,21 +1,9 @@
-"""Launcher orchestration — phase-structured lifecycle.
+"""Launcher — process lifecycle: init, connect, pump, teardown.
 
-Phases (each is a named function, called in order by ``run()``):
-
-  1. ``_init_process``        Win32 init: mutex, STA, sys.path, config, file log
-  2. ``_discover_subsystems`` Import loaders, resolve UI provider
-  3. ``_create_events``       Allocate Win32 event handles for the pump
-  4. ``_wait_and_connect``    Auto-launch, wait for Dragon, probe, connect, monitor
-  5. ``_pump_loop``           Dispatch shutdown / restart / dragon-exit / reappear
-  6. ``_teardown``            Disconnect, stop UI provider, close handles
-
-``run()`` is a pure composition of these phases. Each phase is independently
-callable for pluggable orchestration.
+``run()`` owns the whole process lifetime. ``_wait_and_connect`` and
+``_teardown`` are factored out because restart/reconnect reuse them.
 
 Dependency direction: ``natlink_compat`` → ``natlink_com`` (never reversed).
-
-Restart and reconnect are handled by pump events and reuse the same
-``_probe_and_wait`` + ``_connect`` helpers that the initial connect uses.
 """
 
 import ctypes
@@ -39,37 +27,22 @@ log = logging.getLogger("natlink.compat.launcher")
 ole32 = ctypes.windll.ole32
 
 
-# ---------------------------------------------------------------------------
-# Event handles — bundled so the pump loop and teardown take one parameter
-# ---------------------------------------------------------------------------
-
 @dataclass
-class LauncherEvents:
-    """Win32 event handles owned by the launcher for the lifetime of run()."""
+class Launcher:
+    """Process-scoped launcher: event handles, monitor thread, discovered loaders."""
+    discovered: list
     shutdown: int
     restart: int
     dragon_exited: int
     dragon_reappeared: int
-
-    def close(self):
-        for h in (self.shutdown, self.restart,
-                  self.dragon_exited, self.dragon_reappeared):
-            if h:
-                kernel32.CloseHandle(h)
-
-
-@dataclass
-class LauncherSession:
-    """Process-scoped launcher session.
-
-    A launcher session may own several COM connection sessions across
-    Dragon exits/restarts. The Dragon monitor lives here, not in
-    ``natConnect`` or the shared connection state.
-    """
-    discovered: list
-    events: LauncherEvents
     _monitor_thread: threading.Thread | None = None
     _monitor_stop: threading.Event = field(default_factory=threading.Event)
+
+    # Back-compat alias so _monitor.py and existing callers can read
+    # ``session.events.dragon_exited`` etc. without change.
+    @property
+    def events(self):
+        return self
 
     @property
     def connected(self) -> bool:
@@ -93,28 +66,11 @@ class LauncherSession:
             self._monitor_thread.join(timeout=10)
         self._monitor_thread = None
 
-    # --- Pump dispatch ---
-    # _wait_handlers is a list of (handle, callback) pairs. pump_once()
-    # calls pump(h_events=[...]) and invokes the matching callback when
-    # the corresponding handle fires. Callback returns True to stop the
-    # pump, False/None to keep pumping.
-    _wait_handlers: list = field(default_factory=list)
-
-    def register_wait(self, handle: int, callback) -> None:
-        """Register a (handle, callback) pair for pump_until()."""
-        self._wait_handlers.append((handle, callback))
-
-    def pump_until_stopped(self, timeout_ms: int = 2000) -> None:
-        """Pump Win32 messages + registered handles until a callback returns True."""
-        from natlink_com._pump import pump
-        handles = [h for h, _cb in self._wait_handlers]
-        while True:
-            rc = pump(h_events=handles, timeout_ms=timeout_ms)
-            if rc < 0:
-                continue  # timeout or transient; keep pumping
-            _h, cb = self._wait_handlers[rc]
-            if cb() is True:
-                return
+    def close_handles(self) -> None:
+        for h in (self.shutdown, self.restart,
+                  self.dragon_exited, self.dragon_reappeared):
+            if h:
+                kernel32.CloseHandle(h)
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +81,9 @@ def _probe_and_wait(h_shutdown=None, wait_for_window=True, wait_for_profile=True
     """Wait for Dragon window + COM readiness + profile load.
 
     Returns True if ready, False if shutdown was signaled.
-    Pushes phase updates to the UI provider.
     """
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import (PHASE_WAITING_FOR_DRAGON,
-        PHASE_CONNECTING, PHASE_LOADING_PROFILE)
+    from ._ui_protocol import (set_phase, PHASE_WAITING_FOR_DRAGON,
+                               PHASE_CONNECTING, PHASE_LOADING_PROFILE)
 
     if wait_for_window:
         set_phase(PHASE_WAITING_FOR_DRAGON)
@@ -149,12 +103,10 @@ def _probe_and_wait(h_shutdown=None, wait_for_window=True, wait_for_profile=True
 def _connect(natlink, discovered):
     """Connect to Dragon via ``natlink.natConnect()``. Returns True on success.
 
-    ``discovered`` is the launcher's cached loader list. Threading it
-    through every reconnect keeps loader ``setup()`` hooks from re-running
-    — they are not idempotent.
+    ``discovered`` is the launcher's cached loader list so setup() hooks
+    don't re-run — they are not idempotent.
     """
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_ERROR
+    from ._ui_protocol import set_phase, PHASE_ERROR
     try:
         natlink.natConnect(discovered_loaders=discovered)
         return True
@@ -164,45 +116,15 @@ def _connect(natlink, discovered):
         return False
 
 
-def _start_monitor_if_needed(session):
-    """Start the Dragon-process monitor iff it isn't already running.
-
-    The launcher (not natConnect) owns the monitor thread, because the
-    events it signals are consumed only by the pump loop.
-    """
-    if not session.is_monitor_alive():
+def _start_monitor_if_needed(launcher):
+    """Start the Dragon-process monitor iff it isn't already running."""
+    if not launcher.is_monitor_alive():
         from ._monitor import start_dragon_monitor
-        start_dragon_monitor(session)
+        start_dragon_monitor(launcher)
 
-
-# ---------------------------------------------------------------------------
-# Phase 1 — Init process
-# ---------------------------------------------------------------------------
-
-def _init_process():
-    """Acquire single-instance, set STA, load config, init file logging."""
-    _acquire_single_instance()
-    sys.coinit_flags = 2  # STA
-
-    src_dir = str(Path(__file__).resolve().parent.parent)
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
-
-    ole32.CoInitializeEx(None, 2)  # STA, idempotent
-
-    from ._logging_setup import init_file_logging
-    init_file_logging()
-
-    from natlink_com._config import load_config
-    return load_config()
-
-
-# ---------------------------------------------------------------------------
-# Phase 2 — Discover subsystems (loaders + UI provider)
-# ---------------------------------------------------------------------------
 
 def _discover_ui_provider():
-    """Discover a single UI provider via entry points, or fall back to natlink_ui."""
+    """Entry-point UI provider, or the natlink_ui fallback, or None (headless)."""
     try:
         from importlib.metadata import entry_points
         eps = list(entry_points(group="natlink.ui_provider"))
@@ -229,50 +151,10 @@ def _discover_ui_provider():
         return None
 
 
-def _discover_subsystems():
-    """Import loaders (so their ``setup()`` hooks can install UI providers),
-    then resolve a UI provider if none was installed.
-
-    Returns the discovered loader list; caches it on subsequent reconnects.
-    """
-    from ._state import _state
-    from ._lifecycle import discover_loaders
-
-    discovered = discover_loaders()
-
-    if _state.ui_provider is None:
-        _state.ui_provider = _discover_ui_provider()
-
-    return discovered
-
-
-# ---------------------------------------------------------------------------
-# Phase 3 — Create event handles
-# ---------------------------------------------------------------------------
-
-def _create_events():
-    """Allocate all Win32 event handles used by the pump loop."""
-    from ._monitor import DRAGON_EXITED_EVENT, DRAGON_REAPPEARED_EVENT
-    h_shutdown = kernel32.CreateEventW(None, True, False, _SHUTDOWN_EVENT_NAME)
-    h_restart = kernel32.CreateEventW(None, False, False, _RESTART_EVENT_NAME)
-    h_dragon_exited = kernel32.CreateEventW(None, True, False, DRAGON_EXITED_EVENT)
-    h_dragon_reappeared = kernel32.CreateEventW(None, True, False, DRAGON_REAPPEARED_EVENT)
-    return LauncherEvents(h_shutdown, h_restart, h_dragon_exited, h_dragon_reappeared)
-
-
-# ---------------------------------------------------------------------------
-# Phase 4 — Wait for Dragon, connect, start monitor
-# ---------------------------------------------------------------------------
-
-def _wait_and_connect(session, cfg, natlink):
-    """Auto-launch Dragon if configured, wait for its window, probe COM,
-    connect, and start the process monitor.
-
-    Returns True on successful connection, False if shutdown was requested
-    while waiting for Dragon.
-    """
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_WAITING_FOR_DRAGON
+def _wait_and_connect(launcher, cfg, natlink):
+    """Auto-launch Dragon if configured, wait for it, probe COM, connect,
+    start the monitor. Returns True on success, False if shutdown signaled."""
+    from ._ui_protocol import set_phase, PHASE_WAITING_FOR_DRAGON
     from natlink_com._win32 import is_dragon_running
 
     set_phase(PHASE_WAITING_FOR_DRAGON)
@@ -286,20 +168,19 @@ def _wait_and_connect(session, cfg, natlink):
     dragon_was_running = is_dragon_running()
 
     log.info("Waiting for Dragon...")
-    if not _wait_for_dragon_window(session.events.shutdown, session.events.restart):
+    if not _wait_for_dragon_window(launcher.shutdown, launcher.restart):
         log.info("Shutdown requested while waiting for Dragon")
         return False
 
-    # Window already observed above; only wait for profile load if we
-    # had to auto-launch Dragon ourselves.
-    if not _probe_and_wait(session.events.shutdown,
+    # Window already observed; only wait for profile if we launched Dragon.
+    if not _probe_and_wait(launcher.shutdown,
                            wait_for_window=False,
                            wait_for_profile=not dragon_was_running):
         return False
 
-    if not _connect(natlink, session.discovered):
+    if not _connect(natlink, launcher.discovered):
         return False
-    _start_monitor_if_needed(session)
+    _start_monitor_if_needed(launcher)
     return True
 
 
@@ -310,23 +191,21 @@ def _wait_and_connect(session, cfg, natlink):
 _restart_lock = threading.Lock()
 
 
-def _aborting(session) -> bool:
-    """True if shutdown has been signaled on this session."""
-    return kernel32.WaitForSingleObject(session.events.shutdown, 0) == 0
+def _aborting(launcher) -> bool:
+    """True if shutdown has been signaled."""
+    return kernel32.WaitForSingleObject(launcher.shutdown, 0) == 0
 
 
-def _do_restart_on_main(session, natlink):
-    """Restart Dragon from the main thread (COM-safe).
+def _do_restart_on_main(launcher, natlink):
+    """Restart Dragon from the main thread.
 
-    Restart runs synchronously on the main thread, so it blocks the pump for
-    up to ~60s across stop + start + probe. Between stages we poll the
-    shutdown event and bail out early; the outer pump observes the same
-    event next iteration and _teardown runs. _dragon.stop / _dragon.start
-    don't accept a shutdown handle, so we cannot interrupt them mid-call —
-    the checks straddle them instead.
+    Restart runs synchronously and blocks the pump for up to ~60s across
+    stop + start + probe. Between stages we poll the shutdown event and
+    bail; the outer pump observes the same event and _teardown runs.
+    ``_dragon.stop`` / ``_dragon.start`` don't accept a shutdown handle,
+    so mid-call interruption isn't possible — checks straddle them.
     """
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_RESTARTING, PHASE_ERROR
+    from ._ui_protocol import set_phase, PHASE_RESTARTING, PHASE_ERROR
     from natlink_com import _dragon
     from ._state import _state
 
@@ -336,13 +215,11 @@ def _do_restart_on_main(session, natlink):
 
     try:
         set_phase(PHASE_RESTARTING)
-        session.stop_monitor()
-        if _aborting(session):
+        launcher.stop_monitor()
+        if _aborting(launcher):
             log.info("Restart: shutdown requested after stop_monitor — aborting")
             return
 
-        # Save profile while COM is still live; then disconnect and stop.
-        # _dragon.stop() handles WM_CLOSE → wait → force-kill internally.
         conn = _state.conn
         if conn:
             _dragon.save_profile(conn)
@@ -354,33 +231,32 @@ def _do_restart_on_main(session, natlink):
                 log.debug("Restart: disconnect error", exc_info=True)
 
         gc.collect()
-        if _aborting(session):
+        if _aborting(launcher):
             log.info("Restart: shutdown requested before _dragon.stop — aborting")
             return
 
         _dragon.stop(force=False)
-        if _aborting(session):
+        if _aborting(launcher):
             log.info("Restart: shutdown requested after _dragon.stop — aborting")
             return
 
         _dragon.start(wait=30)
-        if _aborting(session):
+        if _aborting(launcher):
             # Dragon was re-launched but no client is attached. _teardown
-            # won't kill it — matches existing semantics (quitting natlink
-            # doesn't imply quitting Dragon).
+            # won't kill it — quitting natlink doesn't imply quitting Dragon.
             log.info("Restart: shutdown requested after _dragon.start — "
                      "aborting (Dragon left running)")
             return
 
-        if not _probe_and_wait(session.events.shutdown,
+        if not _probe_and_wait(launcher.shutdown,
                                wait_for_window=True,
                                wait_for_profile=True):
             log.info("Restart: shutdown requested while waiting for Dragon")
             return
 
-        if _connect(natlink, session.discovered):
-            _start_monitor_if_needed(session)
-            from ._ui_dispatch import notify_text
+        if _connect(natlink, launcher.discovered):
+            _start_monitor_if_needed(launcher)
+            from ._ui_protocol import notify_text
             notify_text("[Dragon restarted successfully.]\r\n")
     except Exception:
         log.exception("Restart: unexpected error")
@@ -389,10 +265,10 @@ def _do_restart_on_main(session, natlink):
         _restart_lock.release()
 
 
-def _handle_dragon_exited(session, natlink):
-    """Handle Dragon shutdown: disconnect COM. Returns immediately; the
-    Dragon monitor will signal _DRAGON_REAPPEARED if Dragon comes back."""
-    if session.connected:
+def _handle_dragon_exited(launcher, natlink):
+    """Disconnect COM on Dragon shutdown. Returns immediately; the monitor
+    will signal dragon_reappeared if Dragon comes back."""
+    if launcher.connected:
         try:
             natlink.natDisconnect()
         except Exception:
@@ -417,51 +293,52 @@ def _log_unreleased_com_warning_async():
                      name="dragon-exit-diagnostic").start()
 
 
-def _handle_dragon_reappeared(session, natlink):
-    """Handle Dragon reappearance: probe COM, reconnect, restart monitor."""
-    if session.connected:
+def _handle_dragon_reappeared(launcher, natlink):
+    """Probe COM, reconnect, restart monitor."""
+    if launcher.connected:
         return
 
     log.info("Dragon detected — reconnecting...")
     if _probe_and_wait(wait_for_window=False, wait_for_profile=True):
-        if _connect(natlink, session.discovered):
-            _start_monitor_if_needed(session)
+        if _connect(natlink, launcher.discovered):
+            _start_monitor_if_needed(launcher)
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 — Pump loop
+# Pump loop
 # ---------------------------------------------------------------------------
 
 _pump_active = threading.local()
 
 
-def _pump_loop(session, natlink):
-    """Event dispatch loop. Returns when shutdown is signaled."""
-    def on_shutdown():
-        log.info("Shutdown event signaled")
-        return True  # stop pumping
+def _pump_loop(launcher, natlink):
+    """Dispatch shutdown / restart / dragon-exited / dragon-reappeared events
+    until shutdown is signaled."""
+    from natlink_com._pump import pump
 
-    def on_restart():
-        log.info("Restart Dragon event signaled")
-        _do_restart_on_main(session, natlink)
-
-    def on_dragon_exited():
-        kernel32.ResetEvent(session.events.dragon_exited)
-        log.info("Dragon is shutting down — disconnecting")
-        _handle_dragon_exited(session, natlink)
-
-    def on_dragon_reappeared():
-        kernel32.ResetEvent(session.events.dragon_reappeared)
-        _handle_dragon_reappeared(session, natlink)
-
-    session.register_wait(session.events.shutdown, on_shutdown)
-    session.register_wait(session.events.restart, on_restart)
-    session.register_wait(session.events.dragon_exited, on_dragon_exited)
-    session.register_wait(session.events.dragon_reappeared, on_dragon_reappeared)
+    handles = [launcher.shutdown, launcher.restart,
+               launcher.dragon_exited, launcher.dragon_reappeared]
+    _SHUTDOWN, _RESTART, _EXITED, _REAPPEARED = 0, 1, 2, 3
 
     _pump_active.running = True
     try:
-        session.pump_until_stopped(timeout_ms=2000)
+        while True:
+            rc = pump(h_events=handles, timeout_ms=2000)
+            if rc < 0:
+                continue  # timeout or transient
+            if rc == _SHUTDOWN:
+                log.info("Shutdown event signaled")
+                return
+            if rc == _RESTART:
+                log.info("Restart Dragon event signaled")
+                _do_restart_on_main(launcher, natlink)
+            elif rc == _EXITED:
+                kernel32.ResetEvent(launcher.dragon_exited)
+                log.info("Dragon is shutting down — disconnecting")
+                _handle_dragon_exited(launcher, natlink)
+            elif rc == _REAPPEARED:
+                kernel32.ResetEvent(launcher.dragon_reappeared)
+                _handle_dragon_reappeared(launcher, natlink)
     except KeyboardInterrupt:
         pass
     finally:
@@ -473,16 +350,12 @@ def is_pump_active_on_this_thread() -> bool:
     return getattr(_pump_active, "running", False)
 
 
-# ---------------------------------------------------------------------------
-# Phase 6 — Teardown
-# ---------------------------------------------------------------------------
-
-def _teardown(session, natlink):
+def _teardown(launcher, natlink):
     """Clean disconnect, stop UI provider, close event handles."""
     from ._state import _state
     from ._actions import stop_provider
 
-    session.stop_monitor()
+    launcher.stop_monitor()
 
     if _state.connected:
         natlink.natDisconnect()
@@ -495,22 +368,44 @@ def _teardown(session, natlink):
         except Exception:
             pass
 
-    session.events.close()
+    launcher.close_handles()
 
-
-# ---------------------------------------------------------------------------
-# Entry point — pure composition of the phases above
-# ---------------------------------------------------------------------------
 
 def run():
-    """Main launcher entry point."""
-    cfg = _init_process()
-    discovered = _discover_subsystems()
-    session = LauncherSession(discovered=discovered, events=_create_events())
+    """Main entry point."""
+    _acquire_single_instance()
+    sys.coinit_flags = 2  # STA
+
+    src_dir = str(Path(__file__).resolve().parent.parent)
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
+    ole32.CoInitializeEx(None, 2)  # STA, idempotent
+
+    from ._logging_setup import init_file_logging
+    init_file_logging()
+
+    from natlink_com._config import load_config
+    cfg = load_config()
+
+    from ._lifecycle import discover_loaders
+    from ._state import _state
+    discovered = discover_loaders()
+    if _state.ui_provider is None:
+        _state.ui_provider = _discover_ui_provider()
+
+    from ._monitor import DRAGON_EXITED_EVENT, DRAGON_REAPPEARED_EVENT
+    launcher = Launcher(
+        discovered=discovered,
+        shutdown=kernel32.CreateEventW(None, True, False, _SHUTDOWN_EVENT_NAME),
+        restart=kernel32.CreateEventW(None, False, False, _RESTART_EVENT_NAME),
+        dragon_exited=kernel32.CreateEventW(None, True, False, DRAGON_EXITED_EVENT),
+        dragon_reappeared=kernel32.CreateEventW(None, True, False, DRAGON_REAPPEARED_EVENT),
+    )
 
     import natlink_compat as natlink
     try:
-        if _wait_and_connect(session, cfg, natlink):
-            _pump_loop(session, natlink)
+        if _wait_and_connect(launcher, cfg, natlink):
+            _pump_loop(launcher, natlink)
     finally:
-        _teardown(session, natlink)
+        _teardown(launcher, natlink)

@@ -189,7 +189,8 @@ class TestWaitAndConnect(unittest.TestCase):
 
         session = SimpleNamespace(
             discovered=[("mod", "name")],
-            events=SimpleNamespace(shutdown=11, restart=22),
+            shutdown=11,
+            restart=22,
         )
         cfg = MagicMock()
         cfg.getboolean.return_value = False
