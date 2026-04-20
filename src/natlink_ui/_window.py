@@ -47,6 +47,9 @@ _create_queue = queue.SimpleQueue()
 _worker_pool = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="natlink-ui-worker")
 
+import atexit as _atexit
+_atexit.register(_worker_pool.shutdown, wait=False)
+
 
 def _ensure_ui_thread():
     """Start the UI thread if not already running."""
@@ -209,6 +212,8 @@ WM_CLEARTEXT = WM_USER + 201
 WM_SHOWWINDOW = WM_USER + 202
 WM_HIDEWINDOW = WM_USER + 203
 WM_SETTOPMOST = WM_USER + 204
+WM_UPDATE_TRAY = WM_USER + 205
+WM_DESTROY_SAFE = WM_USER + 206
 EM_SETSEL = 0x00B1
 EM_REPLACESEL = 0x00C2
 EM_SCROLLCARET = 0x00B7
@@ -385,6 +390,8 @@ class NatlinkWindow:
         self._icon_added = False
         self._use_guid = True
         self._last_tray = (None, None)  # (tooltip, icon_name) for change detection
+        # Latest-wins payload for WM_UPDATE_TRAY; writes are atomic in CPython.
+        self._pending_tray = None
         self._menu_items = []
         self._menu_lock = threading.Lock()
         self._menu_callbacks = {}
@@ -409,6 +416,16 @@ class NatlinkWindow:
     def show_tray_icon(self, tooltip="Natlink", icon_name="disconnected"):
         if not self._hwnd:
             return
+        # Latest-wins: coalesces bursty state changes. Dedup and Shell_NotifyIconW
+        # run on the UI thread where the tray HWND lives.
+        self._pending_tray = (tooltip, icon_name)
+        _post_to_ui(WM_UPDATE_TRAY, self._hwnd)
+
+    def _apply_pending_tray(self):
+        pending = self._pending_tray
+        if pending is None:
+            return
+        tooltip, icon_name = pending
         key = (tooltip, icon_name)
         if self._icon_added and key == self._last_tray:
             return
@@ -510,11 +527,18 @@ class NatlinkWindow:
     # ------------------------------------------------------------------
 
     def destroy_safe(self):
-        """Destroy from any thread — schedules on the UI thread if needed."""
+        """Destroy from any thread — best-effort, non-blocking.
+
+        If called off the UI thread, posts to the UI thread and returns
+        immediately so main-thread shutdown is never blocked by a wedged
+        UI thread. The UI thread is a daemon and dies with the process;
+        destruction is best-effort.
+        """
         if _thread is not None and threading.current_thread() is not _thread:
-            _run_on_ui_thread(self.destroy)
-        else:
-            self.destroy()
+            if self._hwnd:
+                _post_to_ui(WM_DESTROY_SAFE, self._hwnd)
+            return
+        self.destroy()
 
     def destroy(self):
         """Remove tray icon and destroy window. Must be called on UI thread."""
@@ -534,7 +558,6 @@ class NatlinkWindow:
             gdi32.DeleteObject(self._font)
             self._font = None
         _destroy_icon_cache()
-        _worker_pool.shutdown(wait=False)
 
     # ------------------------------------------------------------------
     # Internals — tray
@@ -766,6 +789,12 @@ class NatlinkWindow:
         if msg == WM_SETTOPMOST:
             self._topmost = bool(wparam)
             self._apply_topmost()
+            return 0
+        if msg == WM_UPDATE_TRAY:
+            self._apply_pending_tray()
+            return 0
+        if msg == WM_DESTROY_SAFE:
+            self.destroy()
             return 0
         if msg == WM_CLEARTEXT:
             if self._edit:

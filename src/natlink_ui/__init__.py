@@ -341,14 +341,14 @@ def bootstrap_config() -> int:
               "Install Dragon first, then run: natlink-ui")
         return 1
 
-    from natlink_com._config import _print_config
-    _print_config(cfg)
+    from natlink_com import print_config
+    print_config(cfg)
     return 0
 
 
 def install_ui(*, startup: bool = False) -> int:
     """Configure runtime and install default UI integration."""
-    from natlink_com._launcher import request_shutdown
+    from natlink_com import request_shutdown
     from . import _shortcuts
 
     # Stop running natlink instance to avoid config/shortcut conflicts
@@ -375,7 +375,7 @@ def install_ui(*, startup: bool = False) -> int:
 
 def uninstall_ui(*, remove_config: bool = True) -> int:
     """Remove default UI integration and optionally natlink.ini."""
-    from natlink_com._launcher import request_shutdown
+    from natlink_com import request_shutdown
     from . import _shortcuts
 
     if request_shutdown():

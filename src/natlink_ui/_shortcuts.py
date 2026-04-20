@@ -9,6 +9,7 @@ import ctypes
 import ctypes.wintypes as wt
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -61,15 +62,21 @@ def _desktop_shortcut_path() -> Path:
 
 
 def _find_ui_exe() -> str:
-    """Find natlink-ui.exe (or legacy natlink-tray.exe) near the Python interpreter."""
+    """Find natlink-ui.exe.
+
+    Checks beside the Python interpreter first (standard venv / uv pip
+    install layout), then falls back to PATH so installs via ``uv tool
+    install`` or ``pipx install`` — which put the exe in a shim dir
+    outside sys.executable's parent — are still found.
+    """
+    name = "natlink-ui.exe"
     py_dir = Path(sys.executable).parent
-    for name in ("natlink-ui.exe", "natlink-tray.exe"):
-        exe = py_dir / name
-        if exe.is_file():
-            return str(exe)
-        exe = py_dir / "Scripts" / name
-        if exe.is_file():
-            return str(exe)
+    for candidate in (py_dir / name, py_dir / "Scripts" / name):
+        if candidate.is_file():
+            return str(candidate)
+    resolved = shutil.which(name)
+    if resolved:
+        return resolved
     return ""
 
 

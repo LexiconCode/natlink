@@ -6,7 +6,7 @@ bring their own config — this file is specific to the default UI.
 
 import logging
 
-from natlink_com._ini_file import IniFile
+from natlink_com import IniFile
 
 log = logging.getLogger("natlink.ui.config")
 
