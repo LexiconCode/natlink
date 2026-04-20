@@ -46,6 +46,19 @@ show_messages_on_startup = true
 show_on_error = false
 ```
 
+Readers:
+
+- `[dragon] version` — `natlink_com._config`, `natlink_com._launcher`,
+  `natlink_compat.__init__` (log path selection).
+- `[dragon] exe_path` — `natlink_com._dragon.launch`.
+- `[dragon] install_path` — populated at config refresh; consumed by
+  external tools.
+- `[Launch] python` — written every run with `sys.executable` so external
+  tools (loaders, installers) can locate the venv interpreter. Not read
+  by natlink itself.
+- `[settings] auto_launch_dragon` — `natlink_compat._launcher`.
+- `[settings] show_messages_on_startup` / `show_on_error` — `natlink_ui`.
+
 ## Output Window
 
 The output window remembers its size and position in `natlink_ui.ini`:
