@@ -30,14 +30,14 @@ class _NatlinkState:
 
         # Active UI provider (default tray/window shell or a replacement)
         self.ui_provider: Optional[object] = None
-        self._current_phase: str = _PHASE_IDLE
-        self._error_message: str = ""
+        self.phase: str = _PHASE_IDLE
+        self.error_message: str = ""
 
         # Cached state for UI snapshots (avoids COM calls during callbacks)
-        self._last_mic_state: str = ""
-        self._last_user_name: str = ""
-        self._last_user_dir: str = ""
-        self._last_loader_states: tuple = ()  # (name, enabled, running) tuples
+        self.last_mic_state: str = ""
+        self.last_user_name: str = ""
+        self.last_user_dir: str = ""
+        self.last_loader_states: tuple = ()  # (name, enabled, running) tuples
 
         # Global callback stacks — multiple loaders can each register one.
         self.begin_callbacks: List[Callable] = []
@@ -81,61 +81,11 @@ class _NatlinkState:
             backend = self.backend
         return backend.conn if backend and backend.conn else None
 
-    # --- Phase / cached state ---
-
-    @property
-    def phase(self) -> str:
-        return self._current_phase
-
-    @phase.setter
-    def phase(self, value: str):
-        self._current_phase = value
-
-    @property
-    def error_message(self) -> str:
-        return self._error_message
-
-    @error_message.setter
-    def error_message(self, value: str):
-        self._error_message = value
-
-    @property
-    def last_mic_state(self) -> str:
-        return self._last_mic_state
-
-    @last_mic_state.setter
-    def last_mic_state(self, value: str):
-        self._last_mic_state = value
-
-    @property
-    def last_user_name(self) -> str:
-        return self._last_user_name
-
-    @last_user_name.setter
-    def last_user_name(self, value: str):
-        self._last_user_name = value
-
-    @property
-    def last_user_dir(self) -> str:
-        return self._last_user_dir
-
-    @last_user_dir.setter
-    def last_user_dir(self, value: str):
-        self._last_user_dir = value
-
-    @property
-    def last_loader_states(self) -> tuple:
-        return self._last_loader_states
-
-    @last_loader_states.setter
-    def last_loader_states(self, value: tuple):
-        self._last_loader_states = value
-
     def cache_user_state(self, mic: str, user: str, user_dir: str):
         """Cache mic/user state for UI snapshots."""
-        self._last_mic_state = mic
-        self._last_user_name = user
-        self._last_user_dir = user_dir
+        self.last_mic_state = mic
+        self.last_user_name = user
+        self.last_user_dir = user_dir
 
     def reset(self):
         """Clear all state (called on natDisconnect)."""
@@ -154,12 +104,12 @@ class _NatlinkState:
         self.slow_callback_ms = 500
         from natlink_com._win32 import kernel32
         kernel32.ResetEvent(self._disconnect_event_handle)
-        self._current_phase = _PHASE_IDLE
-        self._error_message = ""
-        self._last_mic_state = ""
-        self._last_user_name = ""
-        self._last_user_dir = ""
-        self._last_loader_states = ()
+        self.phase = _PHASE_IDLE
+        self.error_message = ""
+        self.last_mic_state = ""
+        self.last_user_name = ""
+        self.last_user_dir = ""
+        self.last_loader_states = ()
         if self._conn_mutex:
             import ctypes
             ctypes.windll.kernel32.CloseHandle(self._conn_mutex)
