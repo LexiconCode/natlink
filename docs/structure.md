@@ -20,7 +20,7 @@ natlink/
 |   |   +-- _loader_protocol.py   # LoaderProtocol (runtime-checkable)
 |   |   +-- _ui_protocol.py       # UIProvider protocol, NatlinkState dataclass
 |   |   +-- _ui_dispatch.py       # notify_ui(), notify_text(), set_phase()
-|   |   +-- _orchestrator.py      # Headless launcher (composable steps, pump loop)
+|   |   +-- _launcher.py          # Headless launcher (composable steps, pump loop)
 |   |   +-- _playstring.py        # playString / playEvents helpers
 |   |   +-- _speech.py            # Speech-related functions (mic, mimic, etc.)
 |   |   +-- _users.py             # User management functions
@@ -35,7 +35,6 @@ natlink/
 |   |
 |   +-- natlink_com/              # Direct COM backend
 |   |   +-- __init__.py            # Exports NatlinkCOM, NatlinkCOMError, etc.
-|   |   +-- _cli.py                # Thin redirect to natlink_compat._cli
 |   |   +-- _config.py             # Configuration file management (natlink.ini)
 |   |   +-- _launcher.py           # Low-level primitives (COM probing, event hooks, mutex)
 |   |   +-- _com_bridge.py        # NatlinkCOM: high-level COM API
@@ -94,7 +93,7 @@ natlink → natlink_compat → natlink_com → Dragon COM
 
 `natlink_com` never imports from `natlink_compat` or `natlink_ui`.
 `natlink_compat` never imports from `natlink_ui` except in
-`_orchestrator.py` as an optional fallback when no `natlink.ui_provider`
+`_launcher.py` as an optional fallback when no `natlink.ui_provider`
 entry point loads.
 
 `natlink_ui` imports from `natlink_compat` for protocols, state types,

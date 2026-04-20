@@ -9,11 +9,11 @@ This document describes how natlink connects to Dragon, processes speech recogni
 
 ## Launcher Startup
 
-When `natlink start` (or `python -m natlink_com._launcher`) runs:
+When `natlink start` runs (entry point `natlink_compat._cli:main` → `natlink_compat._launcher.run()`):
 
 1. **Acquire single-instance mutex** — prevents duplicate launchers.
 2. **Phase 1 — Discover loaders**: calls `discover_loaders()` which imports loader modules via entry points and calls each module's optional `setup()` hook. Loaders may call `set_ui_provider()` at import time or in `setup()` to register a replacement provider early.
-3. **Discover UI provider** — if no provider was registered yet, the orchestrator selects one `natlink.ui_provider` entry point, preferring non-`default` entries over the shipping `natlink_ui` provider. If entry point discovery finds nothing, it falls back to a direct `natlink_ui` import.
+3. **Discover UI provider** — if no provider was registered yet, the launcher selects one `natlink.ui_provider` entry point, preferring non-`default` entries over the shipping `natlink_ui` provider. If entry point discovery finds nothing, it falls back to a direct `natlink_ui` import.
 4. **Set phase `waiting_for_dragon`** — the active provider updates its UI to show the waiting state.
 5. **Wait for Dragon window** — uses `SetWinEventHook(EVENT_OBJECT_CREATE)` for zero-polling detection of Dragon's `DgnBarMainWindowCls` window. Optionally auto-launches Dragon if configured.
 6. **Set phase `connecting`** — probe COM readiness with `CoCreateInstance(DgnSite)` using exponential backoff (0.5s, 1s, 2s, 4s..., max 30s) until Dragon's COM server responds.
@@ -36,7 +36,7 @@ See [Natlink](third_party/index.md) for the public loader contract.
 
 ### Phase 2: UI Provider Discovery
 
-If discovery did not register a provider, the orchestrator loads
+If discovery did not register a provider, the launcher loads
 `natlink.ui_provider` entry points and selects one provider. Non-`default`
 entries take precedence over the shipping tray provider. If no entry point
 loads successfully, natlink falls back to importing `natlink_ui.UIProvider`
