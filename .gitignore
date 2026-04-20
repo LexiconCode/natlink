@@ -25,3 +25,6 @@ site/
 # Coverage
 htmlcov/
 .coverage
+
+# Claude Code local settings (per-user, not versioned)
+.claude/settings.local.json
