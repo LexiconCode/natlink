@@ -9,6 +9,8 @@ As a global client, Dragon calls Register once at startup and UnRegister once
 at shutdown.  AddProcess/EndProcess (per-app lifecycle) are no-ops.
 """
 
+import atexit
+import contextlib
 import logging
 import threading
 import time
@@ -26,6 +28,10 @@ def _atexit_disconnect():
             natDisconnect()
         except Exception:
             pass
+
+
+atexit.register(_atexit_disconnect)
+
 from . import _callbacks
 
 
@@ -49,20 +55,6 @@ def _teardown_objects():
                 log.debug("%s teardown failed", label, exc_info=True)
 
 
-def _start_dragon_monitor():
-    from ._monitor import start_dragon_monitor
-    start_dragon_monitor(_state)
-
-
-class _NatConnectContextManager:
-    """Context manager returned by natConnect for optional with-statement use."""
-    def __enter__(self):
-        return self
-    def __exit__(self, *args):
-        natDisconnect()
-        return False
-
-
 def discover_loaders():
     """Phase 1: Import loader modules so they can register providers/helpers.
 
@@ -83,47 +75,19 @@ def discover_loaders():
     return discovered
 
 
-def _read_runtime_pid():
-    """Read the stale PID from natlink.ini [runtime]. Returns int or None."""
-    import os
+@contextlib.contextmanager
+def _connect_cm():
+    """Internal helper yielded to `with natConnect():` callers."""
     try:
-        from natlink_com._config import load_config
-        pid = load_config().getint("runtime", "pid", fallback=0)
-        return pid if pid and pid != os.getpid() else None
-    except Exception:
-        return None
+        yield
+    finally:
+        natDisconnect()
 
 
-def _write_runtime_pid():
-    """Write our PID to natlink.ini [runtime]."""
-    import os
-    try:
-        from natlink_com._config import load_config, save_config
-        cfg = load_config()
-        if not cfg.has_section("runtime"):
-            cfg.add_section("runtime")
-        cfg.set("runtime", "pid", str(os.getpid()))
-        save_config(cfg)
-    except Exception:
-        pass
+def _establish_com_connection():
+    """Phase A of natConnect: pure COM — mutex, backend, sinks, callbacks.
 
-
-def _clear_runtime_pid():
-    """Remove our PID from natlink.ini [runtime]."""
-    try:
-        from natlink_com._config import load_config, save_config
-        cfg = load_config()
-        if cfg.has_section("runtime"):
-            cfg.remove_option("runtime", "pid")
-            save_config(cfg)
-    except Exception:
-        pass
-
-
-def _connect_com():
-    """Pure COM connection. No UI, no loaders.
-
-    The backend's connect() method implements CDragonCode::initGetSiteObject:
+    The backend's connect() implements CDragonCode::initGetSiteObject:
     "We connect to NatSpeak through a site object which is a better way
     than using the SAPI enumerator objects because it also gives us access
     to the other DgnSAPI interfaces at the same time."
@@ -131,20 +95,13 @@ def _connect_com():
     """
     import ctypes
     from ._win32 import kernel32
-    _NATLINK_CONN_MUTEX = "NatlinkConnectionActive"
-    _state._conn_mutex = kernel32.CreateMutexW(None, True, _NATLINK_CONN_MUTEX)
-    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-        stale_pid = _read_runtime_pid()
-        if stale_pid:
-            log.warning(
-                "Another natlink process is already connected to Dragon "
-                "(PID %d). Kill it for a clean connection.", stale_pid)
-        else:
-            log.warning(
-                "Another natlink process is already connected to Dragon. "
-                "Cross-process grammar routing may cause unexpected behavior.")
 
-    _write_runtime_pid()
+    # Single-instance check: warn (don't block) if another natlink is connected.
+    _state._conn_mutex = kernel32.CreateMutexW(None, True, "NatlinkConnectionActive")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        log.warning(
+            "Another natlink process is already connected to Dragon. "
+            "Cross-process grammar routing may cause unexpected behavior.")
 
     _state.during_init = True
     try:
@@ -152,32 +109,32 @@ def _connect_com():
         backend.connect()
         _state.backend = backend
         _callbacks.register_all()
+    except BaseException:
+        # Release the mutex handle — natDisconnect won't run because
+        # _state.connected is still False when backend is unset.
+        if _state._conn_mutex:
+            kernel32.CloseHandle(_state._conn_mutex)
+            _state._conn_mutex = None
+        raise
     finally:
         _state.during_init = False
 
 
-def _activate(discovered_loaders=None):
-    """Phase 3: diagnostics, state publication, and loader startup."""
-    from ._logging_setup import _setup_logging_and_redirect
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_CONNECTED
-
+def _display_startup_banner(discovered_loaders):
+    """Banner: Python version, loader versions, or disabled-loader warnings."""
+    import sys as _sys
+    backend = _state.backend
     try:
-        import sys as _sys
-        backend = _state.backend
         backend.display_text(f"Python Version: {_sys.version}\r\n", False)
         if discovered_loaders:
             for mod, mod_name in discovered_loaders:
                 base = mod_name.split(".")[0]
-                ver = getattr(mod, "__version__", None)
-                if ver is None:
-                    pkg = _sys.modules.get(base)
-                    if pkg is not None:
-                        ver = getattr(pkg, "__version__", None)
+                ver = getattr(mod, "__version__", None) \
+                    or getattr(_sys.modules.get(base), "__version__", None)
                 if ver:
                     backend.display_text(f"{base} Version: {ver}\r\n", False)
         backend.display_text("Natlink is loaded...\r\n\r\n", False)
-        if not _state.skip_loader and not discovered_loaders:
+        if not discovered_loaders:
             from ._loaders import get_all_loader_names, get_disabled_loaders
             all_names = get_all_loader_names()
             if all_names:
@@ -195,16 +152,9 @@ def _activate(discovered_loaders=None):
     except Exception:
         log.debug("Failed to display startup text", exc_info=True)
 
-    _setup_logging_and_redirect()
 
-    if not getattr(_atexit_disconnect, "_registered", False):
-        import atexit
-        atexit.register(_atexit_disconnect)
-        _atexit_disconnect._registered = True
-
-    log.info("Connection state: connected")
-
-    # Cache initial state for UI snapshots (avoids COM calls during callbacks)
+def _cache_initial_state():
+    """Cache mic/user state for UI snapshots (avoids COM calls in callbacks)."""
     try:
         mic = _state.backend.get_mic_state()
     except Exception:
@@ -215,19 +165,32 @@ def _activate(discovered_loaders=None):
         user, user_dir = "", ""
     _state.cache_user_state(mic, user, user_dir)
 
+
+def _activate(discovered):
+    """Phase B of natConnect: banner, logging redirect, state cache, loaders.
+
+    Does NOT start the Dragon process monitor — that is launcher scope,
+    owned by ``natlink_compat._launcher._start_monitor_if_needed``.
+    """
+    from ._logging_setup import _setup_logging_and_redirect
+    from ._ui_dispatch import set_phase
+    from ._ui_protocol import PHASE_CONNECTED
+
+    _display_startup_banner(discovered)
+    _setup_logging_and_redirect()
+    log.info("Connection state: connected")
+
+    _cache_initial_state()
     set_phase(PHASE_CONNECTED)
 
-    if not _state.is_monitor_alive():
-        _start_dragon_monitor()
-
-    if not _state.skip_loader and discovered_loaders:
+    if discovered:
         from ._loaders import start_loader, _on_loaders_changed
-        for mod, mod_name in discovered_loaders:
+        for mod, mod_name in discovered:
             start_loader(mod, mod_name, _notify=False)
         _on_loaders_changed()
 
 
-def natConnect(bUseThreads: bool = False) -> _NatConnectContextManager:
+def natConnect(bUseThreads: bool = False, *, discovered_loaders=None):
     """Connect to Dragon NaturallySpeaking.
 
     This will launch Dragon if it is not already running. As a side effect,
@@ -243,29 +206,32 @@ def natConnect(bUseThreads: bool = False) -> _NatConnectContextManager:
     Args:
         bUseThreads: Accepted for backwards compatibility (threading is
             always enabled in the current implementation).
+        discovered_loaders: Optional pre-discovered loader list, as returned by
+            ``discover_loaders()``. Used by the launcher (so setup() hooks run
+            before the Dragon-wait) and by tests (empty list = skip discovery).
+            When None, natConnect discovers itself.
     """
     if _state.connected:
         log.debug("natConnect: already connected, disconnecting first")
         natDisconnect()
 
-    _state._disconnect_event.clear()
+    from natlink_com._win32 import kernel32 as _k32
+    _k32.ResetEvent(_state._disconnect_event_handle)
     log.info("natConnect: connecting to Dragon via COM...")
 
-    # Phase 1: Discovery — import loaders
-    discovered = []
-    if not _state.skip_loader:
+    if discovered_loaders is not None:
+        discovered = discovered_loaders
+    else:
         discovered = discover_loaders()
         for _mod, mod_name in discovered:
             log.info("Loader: %s", mod_name)
 
-    # Phase 2: Connection — pure COM
-    _connect_com()
+    _establish_com_connection()
     log.info("Connected to Dragon.")
 
-    # Phase 3: Activation — diagnostics, start loaders
     _activate(discovered)
 
-    return _NatConnectContextManager()
+    return _connect_cm()
 
 
 def natDisconnect() -> None:
@@ -279,14 +245,17 @@ def natDisconnect() -> None:
 
     log.info("natDisconnect: cleaning up...")
 
+    # Reject new dispatches before stop_loaders()/set_phase so sink
+    # callbacks fired during teardown unwind cleanly instead of racing
+    # _queues.clear() in destroy().
+    if _state.backend is not None and _state.backend.conn is not None:
+        _state.backend.conn.begin_shutdown()
+
     # Update tray immediately — COM teardown may block if Dragon is gone
     set_phase(PHASE_IDLE)
 
-    # Only stop the monitor on explicit disconnect (natlink stop / uninstall).
-    # When the launcher disconnects due to Dragon exit, the monitor must
-    # stay alive to detect Dragon reappearing.
-    if not _state.should_keep_monitor():
-        _state.stop_dragon_monitor()
+    # Dragon monitoring is launcher scope. Direct natDisconnect tears down
+    # only the COM connection and its attached runtime objects.
 
     # Disable COM timer before stopping loaders (needs live backend)
     if _state.timer_callbacks:
@@ -298,7 +267,8 @@ def natDisconnect() -> None:
     from ._loaders import stop_loaders
     stop_loaders()
 
-    _state._disconnect_event.set()  # unblock waitForSpeech
+    from natlink_com._win32 import kernel32 as _k32
+    _k32.SetEvent(_state._disconnect_event_handle)  # unblock waitForSpeech
 
     # Match original C++ CDragonCode::natDisconnect order:
     # 0. "check for special training mode which we should cancel"
@@ -335,13 +305,7 @@ def natDisconnect() -> None:
         except Exception:
             log.debug("Backend disconnect failed", exc_info=True)
 
-    # Release connection mutex and clear PID from INI
-    _clear_runtime_pid()
-    if hasattr(_state, '_conn_mutex') and _state._conn_mutex:
-        import ctypes
-        ctypes.windll.kernel32.CloseHandle(_state._conn_mutex)
-        _state._conn_mutex = None
-
+    # _state.reset() closes the connection mutex.
     _state.reset()
     log.info("natDisconnect: done")
 
@@ -381,23 +345,32 @@ def waitForSpeech(timeout_ms: int = 0) -> None:
     _require_not_paused("waitForSpeech")
     if not _state.connected:
         return
-    log.info("waitForSpeech: pumping messages until disconnect...")
-    from ._win32 import kernel32
-    from natlink_com._pump import pump
 
-    _POLL_MS = 500
+    from ._launcher import is_pump_active_on_this_thread
+    if is_pump_active_on_this_thread():
+        # A nested pump here would ignore the launcher's shutdown/restart/
+        # dragon events and wedge the process. The launcher is already
+        # pumping; return immediately and let it own the loop.
+        log.debug("waitForSpeech: launcher pump already running on this "
+                  "thread — returning without nesting")
+        return
+
+    log.info("waitForSpeech: pumping messages until disconnect...")
+    from natlink_com._pump import pump
+    from natlink_com._win32 import kernel32 as _k32
+
+    WAIT_OBJECT_0 = 0
+    h_disc = _state._disconnect_event_handle
     deadline = (time.monotonic() + timeout_ms / 1000.0) if timeout_ms > 0 else None
-    h_tmp = kernel32.CreateEventW(None, True, False, None)
-    try:
-        while not _state._disconnect_event.is_set():
-            if deadline:
-                remaining = int((deadline - time.monotonic()) * 1000)
-                if remaining <= 0:
-                    break
-                wait_ms = min(remaining, _POLL_MS)
-            else:
-                wait_ms = _POLL_MS
-            pump(h_event=h_tmp, timeout_ms=wait_ms, label="")
-    finally:
-        kernel32.CloseHandle(h_tmp)
+    while True:
+        if _k32.WaitForSingleObject(h_disc, 0) == WAIT_OBJECT_0:
+            break
+        if deadline:
+            remaining = int((deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
+                break
+            wait_ms = min(remaining, 2000)
+        else:
+            wait_ms = 2000
+        pump(h_event=h_disc, timeout_ms=wait_ms, label="")
     log.info("waitForSpeech: unblocked")

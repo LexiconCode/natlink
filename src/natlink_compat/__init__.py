@@ -143,7 +143,7 @@ def get_programdata_dir():
 
 def run():
     """Run the headless launcher (pump loop + UI provider discovery)."""
-    from ._orchestrator import run as _run
+    from ._launcher import run as _run
     _run()
 
 

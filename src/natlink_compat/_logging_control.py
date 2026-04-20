@@ -292,6 +292,11 @@ _PRESETS: "list[dict]" = [
             "natlink.com.pump",
             "natlink.com.timer",
             "natlink.com.dragon",
+            "natlink.com.sta",
+            "natlink.com.sta.dispatch",
+            "natlink.com.sta.drain",
+            "natlink.com.sta.health",
+            "natlink.com.sta.error",
         ],
     },
     {

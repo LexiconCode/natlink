@@ -74,26 +74,43 @@ def _callback_trace(name):
                 dispatch_change_callback("mic", mic)
 
 
-_SLOT_HANDLERS = {
-    "on_paused_dispatch": lambda: _on_paused,
-    "on_attrib_changed": lambda: _on_attrib_changed,
-    "on_timer_dispatch": lambda: dispatch_timer_callback,
-    "on_phrase_finish": lambda: dispatch_phrase_finish,
-    "on_phrase_hypothesis": lambda: dispatch_phrase_hypothesis,
-    "on_dict_text_changed": lambda: dispatch_dict_text_changed,
-    "on_dict_begin": lambda: dispatch_dict_begin_callback,
-    "lookup_grammar": lambda: _lookup_grammar,
-}
+def _slot_handlers():
+    """Map of slot-name -> handler. Keys must exactly match the authoritative
+    list on ``DragonConnection.CALLBACK_SLOTS``; any mismatch is a bug, raised
+    by ``register_all`` rather than silently setting ghost attributes."""
+    return {
+        "on_paused_dispatch": _on_paused,
+        "on_attrib_changed": _on_attrib_changed,
+        "on_timer_dispatch": dispatch_timer_callback,
+        "on_phrase_finish": dispatch_phrase_finish,
+        "on_phrase_hypothesis": dispatch_phrase_hypothesis,
+        "on_dict_text_changed": dispatch_dict_text_changed,
+        "on_dict_begin": dispatch_dict_begin_callback,
+        "lookup_grammar": _lookup_grammar,
+    }
 
 
 def register_all():
-    """Wire compat-layer handlers into DragonConnection callback slots."""
+    """Wire compat-layer handlers into DragonConnection callback slots.
+
+    Raises if the authoritative ``CALLBACK_SLOTS`` on the com-bridge side
+    diverges from this module's handler map (silent drift would drop callbacks).
+    """
     backend = _state.backend
     if backend is None:
         return
     conn = backend.conn
-    for name, handler_fn in _SLOT_HANDLERS.items():
-        setattr(conn, name, handler_fn())
+    handlers = _slot_handlers()
+    expected = set(type(conn).CALLBACK_SLOTS)
+    provided = set(handlers.keys())
+    if expected != provided:
+        missing = expected - provided
+        extra = provided - expected
+        raise RuntimeError(
+            f"callback slot mismatch: missing={sorted(missing)} "
+            f"extra={sorted(extra)}")
+    for name, handler in handlers.items():
+        setattr(conn, name, handler)
 
 
 def unregister_all():

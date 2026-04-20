@@ -75,6 +75,12 @@ class UIProvider(Protocol):
 
         Level uses standard Python logging values:
         10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR.
+
+        Called synchronously on the caller's thread — typically the
+        STA main thread that pumps Dragon COM callbacks. Blocking here
+        stalls the pump and can wedge recognition. Queue any blocking
+        I/O or slow work to the provider's own thread and return
+        promptly.
         """
         ...
 

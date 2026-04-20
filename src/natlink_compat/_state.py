@@ -25,14 +25,6 @@ class _NatlinkState:
     def __init__(self):
         self.backend: Optional[NatlinkCOM] = None
 
-        # Dragon process monitor
-        self._dragon_monitor: Optional[threading.Thread] = None
-        self._dragon_monitor_stop: threading.Event = threading.Event()
-        self._keep_monitor_alive: bool = False
-
-        # Skip auto-discovery of loaders via entry_points on natConnect
-        self.skip_loader: bool = False
-
         # Active loaders (multiple allowed; managed by _loaders.py)
         self.loader_registry: List = []  # List[_LoaderEntry]
 
@@ -66,8 +58,11 @@ class _NatlinkState:
         # Slow callback warning threshold (ms, 0=disabled)
         self.slow_callback_ms: int = 500
 
-        # Blocking waiters for waitForSpeech
-        self._disconnect_event: threading.Event = threading.Event()
+        # Win32 manual-reset event: signaled when natDisconnect starts so
+        # waitForSpeech (legacy path) can wake via MsgWaitForMultipleObjects
+        # instead of polling.
+        from natlink_com._win32 import kernel32
+        self._disconnect_event_handle: int = kernel32.CreateEventW(None, True, False, None)
 
         # Connection mutex handle (Win32)
         self._conn_mutex = None
@@ -85,36 +80,6 @@ class _NatlinkState:
         with self.lock:
             backend = self.backend
         return backend.conn if backend and backend.conn else None
-
-    # --- Dragon monitor control ---
-
-    @property
-    def monitor_stop_event(self) -> threading.Event:
-        """Event the monitor thread checks to know when to stop."""
-        return self._dragon_monitor_stop
-
-    def set_monitor_thread(self, thread):
-        """Register the monitor thread (called by start_dragon_monitor)."""
-        self._dragon_monitor = thread
-        self._dragon_monitor_stop.clear()
-
-    def is_monitor_alive(self) -> bool:
-        return self._dragon_monitor is not None and self._dragon_monitor.is_alive()
-
-    def stop_dragon_monitor(self):
-        """Stop the Dragon process monitor thread and wait for it."""
-        self._dragon_monitor_stop.set()
-        if self._dragon_monitor is not None:
-            self._dragon_monitor.join(timeout=10)
-        self._dragon_monitor = None
-
-    def should_keep_monitor(self) -> bool:
-        """Check if monitor should survive natDisconnect."""
-        return self._keep_monitor_alive
-
-    def set_keep_monitor(self, keep: bool):
-        """Set whether monitor should survive the next natDisconnect."""
-        self._keep_monitor_alive = keep
 
     # --- Phase / cached state ---
 
@@ -187,7 +152,8 @@ class _NatlinkState:
         self._pending_speaker = None
         self._pending_micstate = None
         self.slow_callback_ms = 500
-        self._disconnect_event.clear()
+        from natlink_com._win32 import kernel32
+        kernel32.ResetEvent(self._disconnect_event_handle)
         self._current_phase = _PHASE_IDLE
         self._error_message = ""
         self._last_mic_state = ""

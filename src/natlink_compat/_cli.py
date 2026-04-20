@@ -38,10 +38,10 @@ def main():
             print("Natlink is not running.")
 
     elif cmd == "info":
-        from natlink_com._config import load_config, _print_config
+        from natlink_com._config import load_config, print_config
         cfg = load_config()
         if cfg.sections():
-            _print_config(cfg)
+            print_config(cfg)
         else:
             print("Not configured. Run: natlink-ui")
 

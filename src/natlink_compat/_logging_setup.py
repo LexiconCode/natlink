@@ -55,6 +55,13 @@ _default_levels: Dict[str, Tuple[int, int]] = {
     "natlink.com.pump":                         (_W, _I),
     "natlink.com.timer":                        (_W, _I),  # WM_TIMER fires
 
+    # STA dispatch machinery — closure queue + signal primitives in _hidden_wnd
+    "natlink.com.sta":                          (_W, _I),  # lifecycle
+    "natlink.com.sta.dispatch":                 (_W, _I),  # per-enqueue
+    "natlink.com.sta.drain":                    (_W, _I),  # per-drain w/ timing
+    "natlink.com.sta.health":                   (_W, _I),  # backlog / drops
+    "natlink.com.sta.error":                    (_W, _D),  # handler exceptions
+
     # COM sinks — raw notifications arriving from Dragon
     "natlink.com.sink":                         (_W, _D),
     "natlink.com.sink.grammar":                 (_W, _D),
@@ -337,15 +344,14 @@ def _setup_logging_and_redirect():
     with _state.lock:
         global _original_stdout, _original_stderr
         global _file_handler, _notify_handler, _installed_loggers
-        if not _state.skip_loader:
-            try:
-                import sys as _sys2
-                _original_stdout = _sys2.stdout
-                _original_stderr = _sys2.stderr
-                from natlinkcore.redirect_output import redirect
-                redirect()
-            except Exception:
-                log.debug("redirect_output not available", exc_info=True)
+        try:
+            import sys as _sys2
+            _original_stdout = _sys2.stdout
+            _original_stderr = _sys2.stderr
+            from natlinkcore.redirect_output import redirect
+            redirect()
+        except Exception:
+            log.debug("redirect_output not available", exc_info=True)
 
         _remove_handlers()
         try:

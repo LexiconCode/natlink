@@ -71,8 +71,8 @@ def reload_grammars() -> None:
 
     Deferred to the main (STA) thread — grammar unload/load are COM calls.
     """
-    from natlink_com._hidden_wnd import push_to_com
-    push_to_com(_reload_grammars_impl)
+    from natlink_com._hidden_wnd import dispatch
+    dispatch(_reload_grammars_impl)
 
 
 def _reload_grammars_impl() -> None:
@@ -92,16 +92,16 @@ def toggle_loader(name: str) -> None:
     main (STA) thread because COM calls must not cross thread boundaries.
     """
     from ._loaders import get_disabled_loaders as _get_disabled_loaders
-    from natlink_com._hidden_wnd import push_to_com
+    from natlink_com._hidden_wnd import dispatch
     is_disabled = name in _get_disabled_loaders()
     if is_disabled:
         from natlink_com._config import enable_loader
         enable_loader(name)
-        push_to_com(_start_loader_by_name, name)
+        dispatch(_start_loader_by_name, name)
     else:
         from natlink_com._config import disable_loader
         disable_loader(name)
-        push_to_com(_stop_loader_by_name, name)
+        dispatch(_stop_loader_by_name, name)
     # Refresh cached state so the UI sees the INI change immediately.
     # The deferred COM work will refresh again when it completes.
     _refresh_loader_states()
@@ -188,8 +188,8 @@ def set_mic(state: str) -> None:
     Args:
         state: One of ``'on'``, ``'off'``, or ``'sleeping'``.
     """
-    from natlink_com._hidden_wnd import push_to_com
-    push_to_com(_set_mic_impl, state)
+    from natlink_com._hidden_wnd import dispatch
+    dispatch(_set_mic_impl, state)
 
 
 def _set_mic_impl(state: str) -> None:
