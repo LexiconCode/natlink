@@ -12,7 +12,6 @@ Dispatch logic lives in the compat layer — this sink fires events via
 callback slots on DragonConnection (on_paused_dispatch, on_attrib_changed).
 """
 
-import ctypes
 import logging
 import time as _time
 
@@ -33,7 +32,6 @@ _STATE_CHANGE_CODES = frozenset((DGNSRAC_MICSTATE, ISRNSAC_SPEAKER))
 
 log = logging.getLogger("natlink.com.sink.engine")
 _attrib_log = logging.getLogger("natlink.com.sink.engine.attrib_changed")
-_kernel32 = ctypes.windll.kernel32
 
 _ATTRIB_NAMES = {
     DGNSRAC_MICSTATE: "MICSTATE",            # 1001
@@ -97,12 +95,12 @@ def _build_sink_class():
                 _attrib_log.info("← AttribChanged2(%d=%s)", dwCode, name)
             else:
                 _attrib_log.debug("← AttribChanged2(%d=%s)", dwCode, name)
-            # C++ CDgnSRNotifySink::AttribChanged2 (DragonCode.cpp):
-            #   m_pParent->postMessage( WM_ATTRIBCHANGED, dwCode, 0 );
-            # Posts ALL attrib changes with dwCode as wParam — including
-            # DGNSRAC_PLAYBACKDONE.  inputFromFile waits via
-            # messageLoop(WM_ATTRIBCHANGED, DGNSRAC_PLAYBACKDONE).
-            _hidden_wnd.post(_hidden_wnd.WM_ATTRIBCHANGED, dwCode)
+            # C++ postMessage(WM_ATTRIBCHANGED) served both the pump's
+            # PLAYBACKDONE completion (signal) and the attrib-changed
+            # callback (dispatch); those are split here.
+            _hidden_wnd.signal(_hidden_wnd.WM_ATTRIBCHANGED, dwCode, 0)
+            _hidden_wnd.dispatch(self._dispatch_attrib_changed, dwCode,
+                                 channel=_hidden_wnd.WM_ATTRIBCHANGED_WORK)
             return 0  # S_OK
 
         def _dispatch_attrib_changed(self, dwCode):
@@ -111,17 +109,12 @@ def _build_sink_class():
                 cb(dwCode)
 
         def IDgnSREngineNotifySinkW_Paused(self, qCookie):
-            # C++ CDgnSRNotifySink::Paused (DragonCode.cpp):
-            #   QWORD *pCookie = new QWORD;
-            #   *pCookie = qCookie;
-            #   m_pParent->postMessage( WM_PAUSED, (WPARAM)pCookie, 0 );
-            # Heap-allocates cookie and posts to main thread.  We stash
-            # the cookie value in a dict keyed by integer (our equivalent
-            # of heap-allocating a QWORD* passed as WPARAM).
+            # C++ heap-allocated the cookie and posted WM_PAUSED; here
+            # the cookie rides the closure queue instead.
             log.debug("Paused(cookie=%d, pause_recog=%d)",
                       qCookie, self._conn._pause_recog)
-            key = _hidden_wnd.stash_put(qCookie)
-            _hidden_wnd.post(_hidden_wnd.WM_PAUSED, 0, key)
+            _hidden_wnd.dispatch(self._do_paused, qCookie,
+                                 channel=_hidden_wnd.WM_PAUSED)
             return 0  # S_OK
 
         def _do_paused(self, qCookie):
@@ -205,7 +198,7 @@ def _build_sink_class():
             # prevents premature release via preventing release of COM pointers during
             # the callback, so the AddRef/Release pattern is not needed.
             # wParam = client code, lParam = 0 success / non-zero failure
-            _hidden_wnd.post(_hidden_wnd.WM_MIMICDONE, dwClientCode, failed)
+            _hidden_wnd.signal(_hidden_wnd.WM_MIMICDONE, dwClientCode, failed)
             return 0  # S_OK
 
         def IDgnSREngineNotifySinkW_ErrorHappened(self, pUnknown):
@@ -239,3 +232,14 @@ def _build_sink_class():
 
 
 create_engine_sink = lazy_com_factory(_build_sink_class)
+
+
+def completion_channels():
+    """Signal channels this sink drives — wndproc handlers call trigger_message
+    so ``message_loop`` sees completions even when COM's outgoing-call modal
+    loop pre-consumes the message. WM_ATTRIBCHANGED is signal-only; its
+    Python follow-up work rides WM_ATTRIBCHANGED_WORK (auto-routed dispatch).
+    """
+    from . import _hidden_wnd
+    return (_hidden_wnd.WM_PLAYBACK, _hidden_wnd.WM_EXECUTION,
+            _hidden_wnd.WM_MIMICDONE, _hidden_wnd.WM_ATTRIBCHANGED)

@@ -34,7 +34,9 @@ def _sync_op(conn, client_code_fn, wm_msg, label, start, timeout_ms=10000):
     """Run a sync operation matching C++ messageLoop pattern.
 
     push_message_entry -> start callback (dispatch pending + COM call) -> message_loop.
-    lParam: 0 = success, non-zero = abort/error (stash key for error msg).
+    lParam: 0 = success, non-zero = abort/error.  Error message (if any)
+    is attached via signal(data=...) and retrieved here via
+    ``take_signal_data(wm_msg, code)`` after message_loop returns.
 
     Design note from DragonCode.cpp (Notes about nested callbacks):
     "NatSpeak is free to call into this code whenever we are in a Windows
@@ -53,7 +55,7 @@ def _sync_op(conn, client_code_fn, wm_msg, label, start, timeout_ms=10000):
     if lparam is None:
         raise NatlinkCOMError(label, error_message=f"{label} timed out")
     if lparam != 0:
-        error_msg = _hidden_wnd.stash_pop(lparam)
+        error_msg = _hidden_wnd.take_signal_data(wm_msg, code)
         if not error_msg:
             error_msg = f"Error returned from {label}"
         raise NatlinkCOMError(label, error_message=error_msg)

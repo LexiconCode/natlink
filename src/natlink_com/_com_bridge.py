@@ -71,7 +71,7 @@ class NatlinkCOM:
     def connect(self, launch: bool = True) -> None:
         if launch and not is_dragon_running():
             log.info("Dragon not running, attempting to launch...")
-            from ._launcher import launch_dragon
+            from ._dragon import launch as launch_dragon
             launch_dragon()
 
         self._conn.connect()

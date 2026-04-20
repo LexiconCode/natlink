@@ -1,6 +1,6 @@
 """Natlink launcher primitives — low-level COM probing, event hooks, mutex.
 
-High-level orchestration (run(), restart) lives in natlink_compat._orchestrator.
+High-level orchestration (run(), restart) lives in natlink_compat._launcher.
 
 This module provides:
   - COM readiness probing (replaces blind sleep)
@@ -125,7 +125,8 @@ def _wait_for_dragon_window(h_shutdown=None, h_restart=None):
         kernel32.CloseHandle(found_event)
         return _poll_for_dragon_window(h_shutdown, h_restart)
 
-    # Build handle array: [found_event, h_shutdown?, h_restart?]
+    from ._pump import pump
+
     handles = [found_event]
     _FOUND_IDX = 0
     _SHUTDOWN_IDX = None
@@ -136,15 +137,10 @@ def _wait_for_dragon_window(h_shutdown=None, h_restart=None):
     if h_restart:
         _RESTART_IDX = len(handles)
         handles.append(h_restart)
-    n_handles = len(handles)
-    h_array = (ctypes.c_void_p * n_handles)(*handles)
 
     try:
-        QS_ALLINPUT = 0x04FF
-        msg = wt.MSG()
         while True:
-            rc = user32.MsgWaitForMultipleObjects(
-                n_handles, h_array, False, 2000, QS_ALLINPUT)
+            rc = pump(h_events=handles, timeout_ms=2000)
             if rc == _FOUND_IDX:
                 return True
             if _SHUTDOWN_IDX is not None and rc == _SHUTDOWN_IDX:
@@ -153,9 +149,6 @@ def _wait_for_dragon_window(h_shutdown=None, h_restart=None):
                 log.info("Restart event signaled while waiting — launching Dragon")
                 from ._dragon import launch
                 launch()
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
             if user32.FindWindowW(DRAGON_CLS, None):
                 return True
     finally:

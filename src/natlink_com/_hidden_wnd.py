@@ -1,25 +1,53 @@
-"""Hidden window for COM callback dispatch — matches C++ m_hMsgWnd pattern.
+"""Hidden window for COM callback dispatch — STA-thread work queue.
 
 Sink callbacks (PhraseFinish, Paused, MimicDone, etc.) arrive on the STA
-main thread and call post() to queue a Windows message to this window,
-then return immediately so the COM call returns quickly to Dragon.
+main thread.  Sinks defer Python-side work to the main message pump via
+one of two primitives:
 
-When the pump calls DispatchMessage, the message reaches this window's
-wndproc, which looks up the registered handler and runs it.
+  * ``dispatch(fn, *args, channel=WM_X)`` — queue a closure on a
+    per-channel deque and post a Windows message so the pump's wndproc
+    drains it on the next DispatchMessage.  Used for deferring Python
+    callbacks (PhraseFinish → user gotResults, Paused → Begin, etc.).
 
-Complex payloads (ComResObj, cookies, error strings) that don't fit in
-wparam/lparam are stored in a dict via stash_put() and retrieved by the
-handler via stash_pop().  The integer key is passed as lparam.
+  * ``signal(msg, wparam, lparam=0, *, data=None)`` — post a sync-op
+    completion with real Win32 ``wparam``/``lparam`` so the pump's
+    ``message_loop`` can match waiters by client code.  Optional
+    ``data`` is attached via a sidecar dict and retrieved later with
+    ``take_signal_data(msg, wparam)``.
 
-— Joel Gould, DragonCode.cpp (hiddenWndProc, postMessage)
+Two small registries support these:
+
+  * ``_queues`` — per-channel ``deque`` of ``(fn, args, t_enq)`` tuples;
+    wndproc drains one per DispatchMessage call.
+  * ``_signal_data`` — ``(msg, wparam)`` → payload, for attaching a
+    Python object to a signal (e.g. the error string on
+    ``ExecutionAborted``).
+
+Signal channels and OS-generated messages (WM_TIMER) route through
+``register_message_handler(msg, fn)``; their handlers run on the STA
+thread during wndproc.  Dispatch channels are auto-routed and do not
+need a registration.
+
+``_accepting`` gates ``dispatch()``: set ``False`` in ``destroy()``
+before clearing the queues so new dispatches are rejected at the
+source rather than being silently discarded when the queue is cleared.
+
+— Originally Joel Gould, DragonCode.cpp (hiddenWndProc, postMessage)
 """
 
 import ctypes
 import ctypes.wintypes as wt
-import itertools as _itertools
 import logging
+import threading
+import time
+from collections import deque
+from typing import Any, Callable
 
-log = logging.getLogger("natlink.com.pump")
+log        = logging.getLogger("natlink.com.sta")
+log_disp   = logging.getLogger("natlink.com.sta.dispatch")
+log_drain  = logging.getLogger("natlink.com.sta.drain")
+log_health = logging.getLogger("natlink.com.sta.health")
+log_error  = logging.getLogger("natlink.com.sta.error")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -53,48 +81,58 @@ class WNDCLASSEXW(ctypes.Structure):
 # "Here are the various windows messages we send ourself.  We give this
 # window message some random value to avoid conflicts."
 # — Joel Gould, DragonCode.cpp (line 227-228)
+#
+# Classification after the dispatch refactor:
+#   SIGNAL channels carry real wparam/lparam used by pump.message_loop
+#     to match sync-op waiters.  Posted via signal().
+#   DISPATCH channels carry closures via the _queues sidecar; wparam
+#     and lparam are zero at the Win32 level.  Posted via dispatch().
 WM_USER = 0x0400
 
-# Active (used via PostMessage):
-WM_PLAYBACK         = WM_USER + 345  # "this is used to detect when playback is done"
-WM_EXECUTION        = WM_USER + 346  # "Used to detect when script execution is done"
-WM_ATTRIBCHANGED    = WM_USER + 347  # "For when we get the AttribChanged2 notify sink callback"
-WM_PAUSED           = WM_USER + 348  # "For when we get a Paused notify sink callback"
-WM_SENDRESULTS      = WM_USER + 349  # "For when we should send results callback"
-WM_MIMICDONE        = WM_USER + 350  # "For when we get teh MimicDone notify sink callback" [sic]
-# C++ defines WM_HIDEWINDOW (351) and WM_TRAYICON (352) — not used here.
-# We repurpose those slots for Python-only messages:
-WM_PHRASE_HYPO      = WM_USER + 351  # Python-only: hypothesis callback (C++ was WM_HIDEWINDOW)
-WM_DICT_TEXTCHANGED = WM_USER + 352  # Python-only: dict text changed (C++ was WM_TRAYICON)
-WM_DEFERRED_CALL    = WM_USER + 353  # Python-only: run a callable on the main thread
+WM_PLAYBACK            = WM_USER + 345  # SIGNAL — playString / playEvents done
+WM_EXECUTION           = WM_USER + 346  # SIGNAL — execScript done/aborted (data= on abort)
+WM_ATTRIBCHANGED       = WM_USER + 347  # SIGNAL — AttribChanged2 pump completion
+WM_PAUSED              = WM_USER + 348  # DISPATCH — engine sink._do_paused
+WM_SENDRESULTS         = WM_USER + 349  # DISPATCH — conn._do_send_results (router)
+WM_MIMICDONE           = WM_USER + 350  # SIGNAL — RecognitionMimic completion
+WM_PHRASE_HYPO         = WM_USER + 351  # DISPATCH — conn._do_phrase_hypo (router)
+WM_DICT_TEXTCHANGED    = WM_USER + 352  # DISPATCH — conn._do_dict_text_changed (router)
+WM_DEFERRED_CALL       = WM_USER + 353  # DISPATCH — UI default channel
+WM_ATTRIBCHANGED_WORK  = WM_USER + 354  # DISPATCH — engine_sink._dispatch_attrib_changed
 
-# --- Payload stash ---
-_stash = {}
-_stash_seq = _itertools.count(1)
+# Channels that auto-route through the closure queue.
+_DISPATCH_CHANNELS = (
+    WM_PAUSED, WM_SENDRESULTS, WM_PHRASE_HYPO, WM_DICT_TEXTCHANGED,
+    WM_DEFERRED_CALL, WM_ATTRIBCHANGED_WORK,
+)
 
-
-def stash_put(data):
-    """Store a payload, return integer key for lparam."""
-    key = next(_stash_seq)
-    _stash[key] = data
-    return key
-
-
-def stash_pop(key):
-    """Retrieve and remove a stashed payload."""
-    return _stash.pop(key, None)
+# Reverse lookup for log messages.
+_CHANNEL_NAMES = {
+    v: k for k, v in globals().items()
+    if k.startswith("WM_") and k != "WM_USER" and isinstance(v, int)
+}
 
 
-# --- Handler registry ---
-_handlers = {}
+def _ch_name(msg: int) -> str:
+    return _CHANNEL_NAMES.get(msg, f"0x{msg:04X}")
 
 
-def register_handler(msg_id, handler):
-    _handlers[msg_id] = handler
+# --- State ---
+# _queues[channel]          : deque of (fn, args, t_enq) for DISPATCH channels.
+# _signal_data[(msg, wp)]   : object attached to a signal for later consumption.
+# _message_handlers[msg]    : (wparam, lparam) -> None callback for SIGNAL channels
+#                             and OS-generated messages (WM_TIMER).  Dispatch
+#                             channels do NOT use this — they auto-drain.
+# _accepting                : gates dispatch().  Flipped to False in destroy()
+#                             BEFORE queues are cleared to reject new work at
+#                             the source instead of silently losing it.
+_queues: "dict[int, deque]" = {}
+_signal_data: "dict[tuple[int, int], Any]" = {}
+_message_handlers: "dict[int, Callable[[int, int], None]]" = {}
+_accepting = False
 
-
-def unregister_all_handlers():
-    _handlers.clear()
+# Logged once per channel per _BACKLOG_WARN step when a channel backs up.
+_BACKLOG_WARN = 16
 
 
 # --- Window ---
@@ -110,19 +148,48 @@ _hwnd = None
 # — Joel Gould, DragonCode.cpp (line 572-574)
 # In this Python port the GIL serves the same role as CLockPython.
 def _wndproc(hwnd, msg, wparam, lparam):
-    handler = _handlers.get(msg)
-    if handler is not None:
+    # Dispatch channel → drain one closure from its queue.
+    q = _queues.get(msg)
+    if q is not None:
         try:
-            handler(wparam, lparam)
+            fn, args, t_enq = q.popleft()
+        except IndexError:
+            # PostMessage fired for a channel with no queued work —
+            # ignore rather than propagate.
+            return 0
+        t_start = time.perf_counter()
+        try:
+            fn(*args)
         except Exception:
-            log.exception("Hidden wndproc error (msg=0x%04X)", msg)
+            log_error.exception("dispatch handler error channel=%s fn=%s",
+                                _ch_name(msg), getattr(fn, "__qualname__", fn))
+        finally:
+            if log_drain.isEnabledFor(logging.DEBUG):
+                t_end = time.perf_counter()
+                log_drain.debug(
+                    "run channel=%s fn=%s wait=%.1fms dur=%.1fms",
+                    _ch_name(msg),
+                    getattr(fn, "__qualname__", str(fn)),
+                    (t_start - t_enq) * 1000,
+                    (t_end - t_start) * 1000,
+                )
+        return 0
+
+    # Signal channel or OS message → run registered handler.
+    h = _message_handlers.get(msg)
+    if h is not None:
+        try:
+            h(wparam, lparam)
+        except Exception:
+            log_error.exception("message handler error channel=%s",
+                                _ch_name(msg))
         return 0
     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
 
 def create():
     """Create hidden window on main thread. Returns HWND or None."""
-    global _class_registered, _wndproc_ref, _hwnd
+    global _class_registered, _wndproc_ref, _hwnd, _accepting
 
     hInstance = kernel32.GetModuleHandleW(None)
 
@@ -160,8 +227,13 @@ def create():
         log.error("CreateWindowExW failed: %d", ctypes.get_last_error())
         return None
 
+    # Pre-allocate one deque per dispatch channel so dispatch() can index
+    # without setdefault — avoids a narrow race on free-threaded Python.
+    for ch in _DISPATCH_CHANNELS:
+        _queues.setdefault(ch, deque())
+
+    _accepting = True
     log.debug("Hidden COM window created: 0x%X", _hwnd)
-    _register_builtin_handlers()
     return _hwnd
 
 
@@ -171,54 +243,166 @@ def hwnd():
 
 
 def destroy():
-    """Destroy hidden window."""
-    global _hwnd
+    """Destroy hidden window and clear pending work.
+
+    Flips ``_accepting`` to False *before* touching any state so new
+    ``dispatch()`` calls are rejected at the source rather than being
+    enqueued into a deque that is about to be cleared.
+    """
+    global _hwnd, _accepting
+    _accepting = False
     if _hwnd:
         user32.DestroyWindow(_hwnd)
         log.debug("Hidden COM window destroyed")
         _hwnd = None
-    _stash.clear()
+    for q in _queues.values():
+        q.clear()
+    _signal_data.clear()
 
 
-def post(msg, wparam=0, lparam=0):
-    """Post message to hidden window. Cleans stash on failure."""
-    hwnd = _hwnd
-    if hwnd and user32.PostMessageW(hwnd, msg, wparam, lparam):
+# --- Post primitives ---
+
+def dispatch(fn, *args, channel: int = WM_DEFERRED_CALL) -> bool:
+    """Queue ``fn(*args)`` for execution on the COM (STA) thread.
+
+    Safe to call from any thread.  Returns True if queued, False if the
+    hidden window is unavailable or ``_accepting`` is False (shutdown
+    in progress).  The closure runs on the STA thread during the next
+    DispatchMessage that pulls the matching channel message off the
+    Windows queue.
+
+    ``channel`` is one of the ``WM_*`` constants exported by this
+    module.  It is used both as the Windows message ID (for log /
+    Spy++ readability and FIFO ordering guarantees within a channel)
+    and as the key into ``_queues``.
+    """
+    if not _accepting:
+        if log_health.isEnabledFor(logging.DEBUG):
+            log_health.debug("dispatch rejected (not accepting) channel=%s fn=%s",
+                             _ch_name(channel), getattr(fn, "__qualname__", fn))
+        return False
+
+    q = _queues.get(channel)
+    if q is None:
+        # Channel not in _DISPATCH_CHANNELS — caller bug.  Log and bail.
+        log_error.error("dispatch: unknown channel %s fn=%s",
+                        _ch_name(channel), getattr(fn, "__qualname__", fn))
+        return False
+
+    t_enq = time.perf_counter()
+    q.append((fn, args, t_enq))
+    depth = len(q)
+
+    if log_disp.isEnabledFor(logging.DEBUG):
+        log_disp.debug("enq channel=%s fn=%s tid=%d depth=%d",
+                       _ch_name(channel),
+                       getattr(fn, "__qualname__", str(fn)),
+                       threading.get_ident(), depth)
+
+    if depth >= _BACKLOG_WARN and depth % _BACKLOG_WARN == 0:
+        log_health.warning("backlog channel=%s depth=%d",
+                           _ch_name(channel), depth)
+
+    hwnd_local = _hwnd
+    if hwnd_local and user32.PostMessageW(hwnd_local, channel, 0, 0):
         return True
-    if lparam:
-        _stash.pop(lparam, None)
+
+    # Delivery failed — roll back the append so every False return means
+    # "not queued, caller may unwind dependent state (e.g. pause_recog)".
+    # Without this rollback, a queued-but-unposted closure would later
+    # drain and run its finally block, double-decrementing state the
+    # caller already unwound.  That matters for Dragon: a spurious
+    # pause_recog decrement lets Dragon fire Resume before the actual
+    # callback runs.
+    #
+    # Rollback safety: STA sink channels are single-threaded (sink
+    # callback → conn.defer_* → dispatch all run on STA, and the STA
+    # wndproc only ever popleft()s from the left).  The UI channel
+    # (WM_DEFERRED_CALL) is cross-thread but has no pause_recog
+    # accounting, so an unlikely race on pop() is semantically harmless.
+    try:
+        q.pop()
+    except IndexError:
+        pass
+
+    if not hwnd_local:
+        log_health.debug("dispatch dropped (no hwnd) channel=%s fn=%s",
+                         _ch_name(channel),
+                         getattr(fn, "__qualname__", str(fn)))
+    else:
+        log_health.warning("PostMessageW failed channel=%s depth=%d",
+                           _ch_name(channel), depth)
     return False
 
 
-# --- Deferred calls (cross-thread → main STA thread) ---
+def signal(msg: int, wparam: int, lparam: int = 0,
+           *, data: Any = None) -> bool:
+    """Post a sync-op completion to the hidden window.
 
-def _handle_deferred_call(_wparam, lparam):
-    payload = stash_pop(lparam)
-    if payload:
-        fn, args = payload
-        fn(*args)
+    Used for channels whose wparam/lparam are read by
+    ``pump.message_loop``'s waiter-matching logic (WM_PLAYBACK,
+    WM_EXECUTION, WM_MIMICDONE, WM_ATTRIBCHANGED).  ``data`` attaches
+    an optional Python payload indexed by ``(msg, wparam)``; retrieve
+    it with ``take_signal_data(msg, wparam)``.
 
-
-def _register_builtin_handlers():
-    """Register handlers that must survive disconnect/reconnect cycles.
-
-    Called from create() each time the hidden window is (re-)created,
-    after unregister_all_handlers() wiped the previous set.
+    Returns True if the message was posted; False if the hidden window
+    is unavailable.  Unlike dispatch(), signal() is not gated by
+    ``_accepting`` — sync-op completions must get through even during
+    disconnect teardown so blocked ``message_loop`` callers can
+    return cleanly.
     """
-    register_handler(WM_DEFERRED_CALL, _handle_deferred_call)
+    if data is not None:
+        _signal_data[(msg, wparam)] = data
+
+    hwnd_local = _hwnd
+    if hwnd_local and user32.PostMessageW(hwnd_local, msg, wparam, lparam):
+        return True
+
+    # Post failed or no window — clean up the sidecar to avoid leak.
+    if data is not None:
+        _signal_data.pop((msg, wparam), None)
+    if not hwnd_local:
+        log_health.debug("signal dropped (no hwnd) channel=%s",
+                         _ch_name(msg))
+    else:
+        log_health.warning("signal PostMessageW failed channel=%s",
+                           _ch_name(msg))
+    return False
 
 
-def push_to_com(fn, *args):
-    """Schedule fn(*args) to run on the COM (STA) thread.
+def take_signal_data(msg: int, wparam: int) -> Any:
+    """Pop and return data attached to a prior ``signal(msg, wparam, ...)``.
 
-    Posts WM_DEFERRED_CALL to the hidden window so the callable
-    executes during DispatchMessage on the thread that owns COM.
-    Safe to call from any thread.  Fire-and-forget — no return value.
-
-    If the hidden window does not exist (no COM connection), the call
-    is silently dropped — there is no COM to talk to anyway.
+    Returns None if no data was attached.  Idempotent — a second call
+    for the same key returns None.
     """
-    key = stash_put((fn, args))
-    if not post(WM_DEFERRED_CALL, lparam=key):
-        stash_pop(key)
-        log.debug("push_to_com: dropped (no hidden window)")
+    return _signal_data.pop((msg, wparam), None)
+
+
+# --- Message handler registry (for signal channels + OS messages) ---
+
+def register_message_handler(msg: int, handler: Callable[[int, int], None]) -> None:
+    """Register a ``(wparam, lparam) -> None`` handler for a message.
+
+    Used by:
+      * The pump, to route signal channels to ``trigger_message``.
+      * The pump, to handle OS-generated ``WM_TIMER`` heartbeats.
+
+    Dispatch channels (WM_PAUSED, WM_SENDRESULTS, etc.) MUST NOT be
+    registered here — their closures route automatically through
+    the per-channel deques.
+    """
+    if msg in _queues:
+        raise ValueError(
+            f"register_message_handler: channel {_ch_name(msg)} is a "
+            "dispatch channel; use dispatch() instead.")
+    _message_handlers[msg] = handler
+
+
+def unregister_all_message_handlers() -> None:
+    """Clear the signal/OS message handler registry.
+
+    Called during disconnect teardown so handlers captured from the old
+    connection do not persist into a fresh connect.
+    """
+    _message_handlers.clear()

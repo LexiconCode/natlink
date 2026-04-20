@@ -195,13 +195,13 @@ def cli_main():
         cfg = setup_config()
         print(f"Configuration saved to: {_CONFIG_FILE}")
         print()
-        _print_config(cfg)
+        print_config(cfg)
     elif args.info:
         cfg = load_config()
         if not cfg.sections():
             print("No configuration found. Run: natlink-ui")
         else:
-            _print_config(cfg)
+            print_config(cfg)
     elif args.set:
         cfg = load_config()
         key, value = args.set
@@ -223,7 +223,7 @@ def cli_main():
         parser.print_help()
 
 
-def _print_config(cfg):
+def print_config(cfg):
     """Pretty-print configuration."""
     for section in cfg.sections():
         print(f"[{section}]")

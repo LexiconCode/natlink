@@ -12,9 +12,10 @@ to Dragon.  When the pump calls DispatchMessage, the message reaches
 the hidden window's wndproc, which looks up the registered handler and
 runs it.
 
-Complex payloads (ComResObj, cookies) are stored in the stash dict
-(stash_put/stash_pop in _hidden_wnd.py) keyed by integer ID, passed
-as lparam.
+Complex payloads travel inside closures queued on per-channel deques
+in _hidden_wnd.py (dispatch).  Sync-op completions carry real
+wparam/lparam via signal(); optional string payloads attach via
+signal(data=...) and get retrieved with take_signal_data().
 
 Completion tracking (C++ CMessageStack)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -394,10 +395,13 @@ def set_timer(interval_ms: int, callback) -> int:
 
     _timer_callback = callback
 
-    # Register WM_TIMER handler on hidden window
+    # Register WM_TIMER handler on hidden window.  WM_TIMER is an OS-
+    # generated message, not one of our dispatch/signal channels, so it
+    # goes through the generic message-handler slot alongside signal
+    # channels (WM_PLAYBACK, etc.).
     from . import _hidden_wnd
     WM_TIMER = 0x0113
-    _hidden_wnd.register_handler(WM_TIMER, _on_wm_timer)
+    _hidden_wnd.register_message_handler(WM_TIMER, _on_wm_timer)
 
     hwnd = _hidden_wnd.hwnd() or 0
     _active_timer_id = _user32.SetTimer(hwnd, _TIMER_ID, interval_ms, None)

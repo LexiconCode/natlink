@@ -213,14 +213,9 @@ def _build_sink_class():
             # — Joel Gould, DragonCode.cpp (CDragonCode::makeResultsCallback)
             if conn is not None:
                 conn.increment_pause_recog()
-
-            from . import _hidden_wnd
-            key = _hidden_wnd.stash_put(
-                (self._dict_handle, sel_start, sel_start,
-                 "", sel_start, sel_end))
-            if not _hidden_wnd.post(_hidden_wnd.WM_DICT_TEXTCHANGED, 0, key):
-                if conn is not None:
-                    conn.reset_pause_recog()
+                conn.defer_dict_text_changed(
+                    self._dict_handle, sel_start, sel_start,
+                    "", sel_start, sel_end)
 
         def _handle_text_changed(self):
             """Process text change: lock, get changes, get text, defer dispatch.
@@ -264,14 +259,9 @@ def _build_sink_class():
             # — Joel Gould, DragonCode.cpp (CDragonCode::makeResultsCallback)
             if conn is not None:
                 conn.increment_pause_recog()
-
-            from . import _hidden_wnd
-            key = _hidden_wnd.stash_put(
-                (self._dict_handle, old_start, old_end,
-                 new_text, sel_start, sel_end))
-            if not _hidden_wnd.post(_hidden_wnd.WM_DICT_TEXTCHANGED, 0, key):
-                if conn is not None:
-                    conn.reset_pause_recog()
+                conn.defer_dict_text_changed(
+                    self._dict_handle, old_start, old_end,
+                    new_text, sel_start, sel_end)
 
         def _do_dict_text_changed(self, dict_handle, del_start, del_end,
                                   new_text, sel_start, sel_end):

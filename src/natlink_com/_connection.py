@@ -6,7 +6,7 @@ import os
 import sys
 import threading
 from ctypes import POINTER, byref, c_void_p, c_ulong, c_long
-from typing import Optional, Tuple
+from typing import Tuple
 
 from ._com_helpers import qi_raw, release_raw, call_query_service, wrap_comtypes, addref_raw
 from ._guids import (
@@ -94,6 +94,8 @@ class DragonConnection:
         # guarantee Dragon sees the Release in the right order regardless of
         # what comtypes does.  Same pattern as _psp_raw (IServiceProvider).
         self._raw_ptrs: list = []         # [(name, raw_ptr), ...] release order
+        # Flipped via begin_shutdown() so defer_* routers reject new work.
+        self._shutting_down: bool = False
         # Dictation (Phase 6) — raw IServiceProvider kept for lazy QueryService
         self._psp_raw: int = 0            # raw IServiceProvider pointer (AddRef'd)
         self._ext_mod_strings = None  # IDgnExtModSupStringsW comtypes wrapper
@@ -341,95 +343,20 @@ class DragonConnection:
         self._training = self._try_qi(self._central, "IDgnSRTrainingA")
 
     def _register_sinks(self):
-        """Register sinks and wire hidden-window message handlers."""
+        """Register sinks and wire signal-channel handlers into wndproc.
+
+        Each sink declares its own ``completion_channels``; this method
+        is agnostic to which channels exist. Adding a new signal channel
+        is owned by the sink module, not the registration site.
+        """
         from . import _hidden_wnd
-        from ._engine_sink import create_engine_sink
+        from ._engine_sink import create_engine_sink, completion_channels
         self._engine_sink = create_engine_sink(self)
 
         from ._pump import trigger_message
-
-        # Engine sink handlers
-        #
-        # WM_ATTRIBCHANGED serves double duty:
-        #   1. Dispatches change callbacks (mic state, user change)
-        #   2. Triggers message_loop for inputFromFile
-        #      (WM_ATTRIBCHANGED, DGNSRAC_PLAYBACKDONE)
-        #
-        # trigger_message handles the STA pre-consumed case: a COM
-        # outgoing call's modal loop may dispatch this message before
-        # message_loop's GetMessage sees it.
-        def _on_attrib_changed(wp, lp):
-            trigger_message(_hidden_wnd.WM_ATTRIBCHANGED, wp, lp)
-            self._engine_sink._dispatch_attrib_changed(wp)
-        _hidden_wnd.register_handler(_hidden_wnd.WM_ATTRIBCHANGED,
-                                     _on_attrib_changed)
-
-        # C++ onPaused (line 756): if m_nPauseRecog is set, the cookie
-        # is deferred until resetPauseRecog clears it.  This prevents
-        # deadlock when recognitionMimic is called from gotResults.
-        # "whoops, we want to pause recognition for a while (probably
-        # because we are processing the results of a previous recognition)"
-        # — Joel Gould, DragonCode.cpp (onPaused, line 764)
-        def _on_paused(wp, lp):
-            cookie = _hidden_wnd.stash_pop(lp)
-            if cookie is not None:
-                self._engine_sink._do_paused(cookie)
-        _hidden_wnd.register_handler(_hidden_wnd.WM_PAUSED, _on_paused)
-
-        # Sync-op completion messages — wndproc calls trigger_message so
-        # the completion is captured even when dispatched by COM's
-        # outgoing-call modal loop (pre-consumed pattern).
-        # C++ hiddenWndProc (line 632): "these are handled in their
-        # respective message loops" — for WM_PLAYBACK/WM_EXECUTION.
-        # WM_MIMICDONE is not in C++ hiddenWndProc (handled entirely
-        # via messageLoop's PeekMessage) but follows the same pattern.
-        for wm in (_hidden_wnd.WM_PLAYBACK,
-                    _hidden_wnd.WM_EXECUTION,
-                    _hidden_wnd.WM_MIMICDONE):
-            _hidden_wnd.register_handler(wm,
-                lambda wp, lp, m=wm: trigger_message(m, wp, lp))
-
-        # Grammar sink handlers
-        #
-        # PhraseFinish synchronization (C++ header, lines 51-87):
-        # "we do not callback into Python code from a PhraseFinish
-        # callback.  Instead we post ourselves a message to do the
-        # callback after returning from the PhraseFinish call."
-        # — Joel Gould, DragonCode.cpp (header comment, lines 78-80)
-        def _on_send_results(wp, lp):
-            data = _hidden_wnd.stash_pop(lp)
-            if data is None:
-                return
-            gram_handle, dwFlags, res_obj = data
-            gram = self._grammar_sinks.get(gram_handle)
-            if gram:
-                gram._do_phrase_finish(gram_handle, dwFlags, res_obj)
-            else:
-                log.debug("WM_SENDRESULTS: grammar %d gone, resetting pause_recog",
-                          gram_handle)
-                self.reset_pause_recog()
-        _hidden_wnd.register_handler(_hidden_wnd.WM_SENDRESULTS, _on_send_results)
-
-        def _on_phrase_hypo(wp, lp):
-            data = _hidden_wnd.stash_pop(lp)
-            if data is None:
-                return
-            gram_handle, words = data
-            gram = self._grammar_sinks.get(gram_handle)
-            if gram:
-                gram._do_phrase_hypothesis(gram_handle, words)
-        _hidden_wnd.register_handler(_hidden_wnd.WM_PHRASE_HYPO, _on_phrase_hypo)
-
-        # Dict sink handler
-        def _on_dict_text_changed(wp, lp):
-            data = _hidden_wnd.stash_pop(lp)
-            if data is None:
-                return
-            sink = self._dict_sinks.get(data[0])
-            if sink:
-                sink._do_dict_text_changed(*data)
-        _hidden_wnd.register_handler(_hidden_wnd.WM_DICT_TEXTCHANGED,
-                                     _on_dict_text_changed)
+        for wm in completion_channels():
+            _hidden_wnd.register_message_handler(
+                wm, lambda wp, lp, m=wm: trigger_message(m, wp, lp))
 
         iid = self._tlb.IDgnSREngineNotifySinkW._iid_
         key = self._central.Register(self._engine_sink, iid)
@@ -498,10 +425,17 @@ class DragonConnection:
         from ._pump import pump
         pump()
 
-        # Destroy hidden window after all sinks are unregistered
+        # Destroy hidden window after all sinks are unregistered.
+        # unregister_all_message_handlers clears the signal/OS handler
+        # registry (WM_PLAYBACK, WM_TIMER, etc.); dispatch channels
+        # (closures) are cleared by destroy() itself.
         from . import _hidden_wnd
-        _hidden_wnd.unregister_all_handlers()
+        _hidden_wnd.unregister_all_message_handlers()
         _hidden_wnd.destroy()
+
+    def begin_shutdown(self) -> None:
+        """Mark the connection as shutting down so defer_* routers drop new work."""
+        self._shutting_down = True
 
     def disconnect(self) -> None:
         """Release COM references (step 2 of disconnect).
@@ -625,6 +559,89 @@ class DragonConnection:
 
     def unregister_dict_sink(self, dict_handle):
         self._dict_sinks.pop(dict_handle, None)
+
+    # --- Dispatch routers for handle-keyed channels ---------------------
+    #
+    # Grammar and dict sinks can be unloaded mid-connection.  If a sink
+    # closure captured ``self`` on the sink directly, it would keep the
+    # sink alive past unload — and the closure might then call into a
+    # released COM object.
+    #
+    # Routing through the connection keeps the closure capturing the
+    # long-lived connection instead.  The ``_do_*`` method looks up the
+    # sink in its authoritative registry at drain time.  If the sink is
+    # gone (grammar/dict unloaded between post and drain), the router
+    # unwinds ``pause_recog`` so Dragon does not stay blocked.
+    #
+    # Post-time ``_shutting_down`` check is additive: rejects new work
+    # once natDisconnect starts, so closures don't race with teardown.
+
+    def defer_send_results(self, gram_handle, dwFlags, res_obj) -> bool:
+        if self._shutting_down:
+            self.reset_pause_recog()
+            return False
+        from . import _hidden_wnd
+        if _hidden_wnd.dispatch(
+                self._do_send_results, gram_handle, dwFlags, res_obj,
+                channel=_hidden_wnd.WM_SENDRESULTS):
+            return True
+        # Dispatch refused / post failed — unwind pause_recog so Dragon
+        # doesn't stay blocked waiting for a callback that never arrives.
+        self.reset_pause_recog()
+        return False
+
+    def _do_send_results(self, gram_handle, dwFlags, res_obj):
+        if self._shutting_down:
+            self.reset_pause_recog()
+            return
+        gram = self._grammar_sinks.get(gram_handle)
+        if gram is None:
+            log.debug("WM_SENDRESULTS: grammar %d gone, resetting pause_recog",
+                      gram_handle)
+            self.reset_pause_recog()
+            return
+        gram._do_phrase_finish(gram_handle, dwFlags, res_obj)
+
+    def defer_phrase_hypo(self, gram_handle, words) -> bool:
+        # WM_PHRASE_HYPO doesn't participate in pause_recog.
+        if self._shutting_down:
+            return False
+        from . import _hidden_wnd
+        return _hidden_wnd.dispatch(
+            self._do_phrase_hypo, gram_handle, words,
+            channel=_hidden_wnd.WM_PHRASE_HYPO)
+
+    def _do_phrase_hypo(self, gram_handle, words):
+        if self._shutting_down:
+            return
+        gram = self._grammar_sinks.get(gram_handle)
+        if gram is None:
+            return
+        gram._do_phrase_hypothesis(gram_handle, words)
+
+    def defer_dict_text_changed(self, dict_handle, *payload) -> bool:
+        if self._shutting_down:
+            self.reset_pause_recog()
+            return False
+        from . import _hidden_wnd
+        if _hidden_wnd.dispatch(
+                self._do_dict_text_changed, dict_handle, *payload,
+                channel=_hidden_wnd.WM_DICT_TEXTCHANGED):
+            return True
+        self.reset_pause_recog()
+        return False
+
+    def _do_dict_text_changed(self, dict_handle, *payload):
+        if self._shutting_down:
+            self.reset_pause_recog()
+            return
+        sink = self._dict_sinks.get(dict_handle)
+        if sink is None:
+            log.debug("WM_DICT_TEXTCHANGED: dict %d gone, resetting pause_recog",
+                      dict_handle)
+            self.reset_pause_recog()
+            return
+        sink._do_dict_text_changed(dict_handle, *payload)
 
     def increment_pause_recog(self):
         """Increment pause_recog counter (called when posting WM_SENDRESULTS).

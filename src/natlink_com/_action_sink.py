@@ -6,17 +6,18 @@
 Implements IDgnSSvcActionNotifySink: PlaybackDone, ExecutionDone, etc.
 
 Matches C++ CDgnSSvcActionNotifySink (DragonCode.cpp line 390): each
-callback PostMessages to the hidden window with dwClientCode as wParam.
+callback signals the hidden window with dwClientCode as wParam.
 The caller's message_loop matches via TriggerMessage(wParam == clientCode).
 
-  PlaybackDone     -> WM_PLAYBACK  (wParam=code, lParam=0)
-  PlaybackAborted  -> WM_PLAYBACK  (wParam=code, lParam=1)
-  ExecutionDone    -> WM_EXECUTION (wParam=code, lParam=0)
-  ExecutionAborted -> WM_EXECUTION (wParam=code, lParam=(LPARAM)pData)
+  PlaybackDone     -> signal(WM_PLAYBACK,  code, 0)
+  PlaybackAborted  -> signal(WM_PLAYBACK,  code, 1)
+  ExecutionDone    -> signal(WM_EXECUTION, code, 0)
+  ExecutionAborted -> signal(WM_EXECUTION, code, 1, data=error_msg)
 
 In the C++ original, ExecutionAborted passes a heap-allocated DWORD[2]
-holding {eCode, iLineNumber} as lParam.  In this Python port we stash a
-formatted error string and pass the stash key instead.
+holding {eCode, iLineNumber} as lParam.  Here we attach a formatted
+error string as signal data keyed by (WM_EXECUTION, dwClientCode);
+_sync_op retrieves it via take_signal_data when lparam != 0.
 """
 
 import logging
@@ -37,11 +38,11 @@ def _build_sink_class():
     class ActionSink(COMObject):
         """Playback/script completion sink.
 
-        PostMessage matching C++ CDgnSSvcActionNotifySink:
-          PlaybackDone     → PostMessage(WM_PLAYBACK, dwClientCode, 0)
-          PlaybackAborted  → PostMessage(WM_PLAYBACK, dwClientCode, 1)
-          ExecutionDone    → PostMessage(WM_EXECUTION, dwClientCode, 0)
-          ExecutionAborted → PostMessage(WM_EXECUTION, dwClientCode, stash_key)
+        signal() matching C++ CDgnSSvcActionNotifySink:
+          PlaybackDone     → signal(WM_PLAYBACK,  dwClientCode, 0)
+          PlaybackAborted  → signal(WM_PLAYBACK,  dwClientCode, 1)
+          ExecutionDone    → signal(WM_EXECUTION, dwClientCode, 0)
+          ExecutionAborted → signal(WM_EXECUTION, dwClientCode, 1, data=errmsg)
         """
         _com_interfaces_ = [IDgnSSvcActionNotifySink, IDgnGetSinkFlags]
 
@@ -58,7 +59,7 @@ def _build_sink_class():
 
         def IDgnSSvcActionNotifySink_PlaybackDone(self, dwClientCode):
             log.debug("PlaybackDone(code=%d)", dwClientCode)
-            _hidden_wnd.post(_hidden_wnd.WM_PLAYBACK, dwClientCode, 0)
+            _hidden_wnd.signal(_hidden_wnd.WM_PLAYBACK, dwClientCode, 0)
             return 0
 
         def IDgnSSvcActionNotifySink_PlaybackAborted(self, dwClientCode, hrReason):
@@ -67,12 +68,12 @@ def _build_sink_class():
             # -- Joel Gould, DragonCode.cpp line 436-437
             log.warning("PlaybackAborted(code=%d, hr=0x%08X)",
                         dwClientCode, hrReason & 0xFFFFFFFF)
-            _hidden_wnd.post(_hidden_wnd.WM_PLAYBACK, dwClientCode, 1)
+            _hidden_wnd.signal(_hidden_wnd.WM_PLAYBACK, dwClientCode, 1)
             return 0
 
         def IDgnSSvcActionNotifySink_ExecutionDone(self, dwClientCode):
             log.debug("ExecutionDone(code=%d)", dwClientCode)
-            _hidden_wnd.post(_hidden_wnd.WM_EXECUTION, dwClientCode, 0)
+            _hidden_wnd.signal(_hidden_wnd.WM_EXECUTION, dwClientCode, 0)
             return 0
 
         def IDgnSSvcActionNotifySink_ExecutionStatus(self, dwClientCode, dwStatus):
@@ -100,14 +101,16 @@ def _build_sink_class():
             #   pData[0] = eCode;
             #   pData[1] = iLineNumber;
             #   postMessage(WM_EXECUTION, dwClientCode, (LPARAM)pData);
-            # We stash a formatted error string instead and pass the stash key.
+            # We attach a formatted error string as signal data keyed by
+            # (WM_EXECUTION, dwClientCode); lparam=1 flags the abort so
+            # _sync_op knows to fetch and raise.
             # -- Joel Gould, DragonCode.cpp lines 492-496
             log.warning("ExecutionAborted(code=%d, hr=0x%08X, line=%d)",
                         dwClientCode, hrReason & 0xFFFFFFFF, dwExtra)
             error_msg = (f"Script execution aborted "
                          f"(error 0x{hrReason & 0xFFFFFFFF:08X}, line {dwExtra})")
-            key = _hidden_wnd.stash_put(error_msg)
-            _hidden_wnd.post(_hidden_wnd.WM_EXECUTION, dwClientCode, key)
+            _hidden_wnd.signal(_hidden_wnd.WM_EXECUTION, dwClientCode, 1,
+                               data=error_msg)
             return 0
 
     return ActionSink

@@ -121,13 +121,13 @@ def _build_sink_class():
                 # would deadlock: mimic needs the recognition loop to
                 # proceed, but Dragon won't restart recognition until
                 # PhraseFinish returns.
-                key = _hidden_wnd.stash_put(
-                    (self._gram_handle, dwFlags, res_obj))
-                if not _hidden_wnd.post(_hidden_wnd.WM_SENDRESULTS, 0, key):
-                    # post() already cleaned the stash; undo the pause_recog
-                    # increment so Dragon's recognition loop isn't frozen.
-                    if conn is not None:
-                        conn.reset_pause_recog()
+                # Route through the connection so the drain-time grammar
+                # lookup remains authoritative (handles mid-connection
+                # unload race).  defer_send_results returns False if
+                # shutdown is in progress or the post failed — in either
+                # case it has already unwound pause_recog itself.
+                if conn is not None:
+                    conn.defer_send_results(self._gram_handle, dwFlags, res_obj)
             except Exception:
                 log.exception("Error in PhraseFinish handler")
             return 0
@@ -166,9 +166,9 @@ def _build_sink_class():
                 from ._res_obj import parse_srphrasew
                 raw_words = parse_srphrasew(pSRPhrase)
                 words = [w for w, _ in raw_words]
-                key = _hidden_wnd.stash_put(
-                    (self._gram_handle, words))
-                _hidden_wnd.post(_hidden_wnd.WM_PHRASE_HYPO, 0, key)
+                conn = self._connection
+                if conn is not None:
+                    conn.defer_phrase_hypo(self._gram_handle, words)
             except Exception:
                 log.exception("Error in PhraseHypothesis handler")
             return 0
