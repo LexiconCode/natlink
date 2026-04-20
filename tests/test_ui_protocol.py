@@ -19,7 +19,7 @@ class TestNatlinkState(unittest.TestCase):
         self.assertEqual(state.user_name, "")
         self.assertEqual(state.user_directory, "")
         self.assertEqual(state.dragon_version, (0, 0, 0))
-        self.assertEqual(state.loaders, ())
+        self.assertEqual(state.loader_states, ())
         self.assertEqual(state.error_message, "")
 
     def test_frozen(self):
@@ -36,11 +36,11 @@ class TestNatlinkState(unittest.TestCase):
             mic_state="on",
             user_name="TestUser",
             dragon_version=(15, 0, 0),
-            loaders=("natlinkcore",),
+            loader_states=(("natlinkcore", True, True),),
         )
         self.assertTrue(state.connected)
         self.assertEqual(state.mic_state, "on")
-        self.assertEqual(state.loaders, ("natlinkcore",))
+        self.assertEqual(state.loader_states, (("natlinkcore", True, True),))
 
     def test_equality(self):
         from natlink_compat._ui_protocol import NatlinkState

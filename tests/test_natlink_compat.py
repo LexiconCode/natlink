@@ -720,10 +720,12 @@ class TestWaitForSpeech(_ConnectedTestBase):
         import threading
         from natlink_compat import waitForSpeech
 
+        from natlink_com._win32 import kernel32 as _k32
+
         # Signal disconnect after 200ms
         def signal():
             time.sleep(0.2)
-            self._state._disconnect_event.set()
+            _k32.SetEvent(self._state._disconnect_event_handle)
 
         t = threading.Thread(target=signal)
         t.start()
@@ -1060,9 +1062,8 @@ class TestDictTextChangedDeferred(unittest.TestCase):
         return conn, text_iface
 
     def test_text_changed_increments_pause_recog(self):
-        """TextChanged must increment pause_recog before posting."""
+        """TextChanged must increment pause_recog before deferring."""
         from natlink_com._dict_sink import _build_sink_class
-        from natlink_com import _hidden_wnd
 
         conn, text_iface = self._make_mock_sink()
 
@@ -1072,24 +1073,18 @@ class TestDictTextChangedDeferred(unittest.TestCase):
         sink._text_iface = text_iface
         sink._connection = conn
 
-        # Patch _hidden_wnd.post to capture what's posted (don't actually post)
-        posted = []
-        original_post = _hidden_wnd.post
-        _hidden_wnd.post = lambda msg, wp=0, lp=0: posted.append((msg, wp, lp)) or True
-        try:
-            sink._handle_text_changed()
-        finally:
-            _hidden_wnd.post = original_post
+        sink._handle_text_changed()
 
         # pause_recog should have been incremented
         self.assertEqual(conn._pause_recog, 1,
                          "TextChanged must increment pause_recog")
-        # Message should be posted
-        self.assertEqual(len(posted), 1, "Should post one message")
+        # Sink should route through conn.defer_dict_text_changed
+        conn.defer_dict_text_changed.assert_called_once()
+        args = conn.defer_dict_text_changed.call_args.args
+        self.assertEqual(args[0], 42, "dict_handle passed first")
 
-        # Simulate handler dispatch
-        data = _hidden_wnd.stash_pop(posted[0][2])
-        sink._do_dict_text_changed(*data)
+        # Simulate drain: conn router calls sink._do_dict_text_changed
+        sink._do_dict_text_changed(*args)
 
         # After handler runs, pause_recog should be back to 0
         self.assertEqual(conn._pause_recog, 0,
@@ -1097,9 +1092,8 @@ class TestDictTextChangedDeferred(unittest.TestCase):
         conn.on_dict_text_changed.assert_called_once()
 
     def test_text_sel_changed_increments_pause_recog(self):
-        """TextSelChanged must also increment pause_recog before posting."""
+        """TextSelChanged must also increment pause_recog before deferring."""
         from natlink_com._dict_sink import _build_sink_class
-        from natlink_com import _hidden_wnd
 
         conn, text_iface = self._make_mock_sink()
 
@@ -1109,20 +1103,15 @@ class TestDictTextChangedDeferred(unittest.TestCase):
         sink._text_iface = text_iface
         sink._connection = conn
 
-        posted = []
-        original_post = _hidden_wnd.post
-        _hidden_wnd.post = lambda msg, wp=0, lp=0: posted.append((msg, wp, lp)) or True
-        try:
-            sink._handle_text_sel_changed()
-        finally:
-            _hidden_wnd.post = original_post
+        sink._handle_text_sel_changed()
 
         self.assertEqual(conn._pause_recog, 1,
                          "TextSelChanged must increment pause_recog")
-        self.assertEqual(len(posted), 1)
+        conn.defer_dict_text_changed.assert_called_once()
+        args = conn.defer_dict_text_changed.call_args.args
+        self.assertEqual(args[0], 42)
 
-        data = _hidden_wnd.stash_pop(posted[0][2])
-        sink._do_dict_text_changed(*data)
+        sink._do_dict_text_changed(*args)
 
         self.assertEqual(conn._pause_recog, 0)
         conn.on_dict_text_changed.assert_called_once()

@@ -65,10 +65,21 @@ class TestFindUIExe(unittest.TestCase):
 
     def test_returns_empty_when_not_found(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("sys.executable", str(Path(tmpdir) / "python.exe")):
+            with patch("sys.executable", str(Path(tmpdir) / "python.exe")), \
+                 patch("shutil.which", return_value=None):
                 from natlink_ui._shortcuts import _find_ui_exe
                 result = _find_ui_exe()
                 self.assertEqual(result, "")
+
+    def test_falls_back_to_path(self):
+        """When not beside sys.executable, _find_ui_exe uses shutil.which."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            found_path = "C:\\path\\to\\natlink-ui.exe"
+            with patch("sys.executable", str(Path(tmpdir) / "python.exe")), \
+                 patch("shutil.which", return_value=found_path):
+                from natlink_ui._shortcuts import _find_ui_exe
+                result = _find_ui_exe()
+                self.assertEqual(result, found_path)
 
 
 class TestPsEscape(unittest.TestCase):

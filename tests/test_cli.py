@@ -30,7 +30,7 @@ class TestCLIStop(unittest.TestCase):
 
 class TestCLIInfo(unittest.TestCase):
 
-    @patch("natlink_com._config._print_config")
+    @patch("natlink_com._config.print_config")
     @patch("natlink_com._config.load_config")
     def test_info_configured(self, mock_load, mock_print):
         import configparser

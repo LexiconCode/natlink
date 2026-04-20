@@ -28,7 +28,7 @@ _TEST_LOADERS = [
 def main():
     with patch("natlink_compat._loaders.get_all_loader_names",
                return_value=_TEST_LOADERS):
-        from natlink_compat._orchestrator import run
+        from natlink_compat._launcher import run
         run()
 
 
