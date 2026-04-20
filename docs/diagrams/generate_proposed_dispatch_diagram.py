@@ -1,8 +1,11 @@
-"""Preview: Proposed dispatch architecture (closure queue + signal primitives).
+"""Dispatch architecture: closure queue + signal primitives.
 
-Mirrors the layout of generate_postmsg_diagram.py so a visual diff shows
-what the restructuring plan changes. Depicts unimplemented code — keep
-untracked in git until the refactor actually lands.
+Depicts the current implementation of ``natlink_com._hidden_wnd``:
+``dispatch()`` queues closures on per-channel deques and ``signal()``
+posts sync-op completions with real Win32 wparam/lparam. The refactor
+this diagram originally previewed has landed; kept alongside
+``generate_postmsg_diagram.py`` which stays for the broader
+PostMessage-deferral narrative.
 """
 
 from pathlib import Path
@@ -93,16 +96,16 @@ def arrow_left(x1, x2, y, color=ARROW, w=2):
 # ============================================================
 # TITLE
 # ============================================================
-ctext("Proposed Dispatch Architecture  —  PREVIEW",
+ctext("Dispatch Architecture  —  dispatch() + signal()",
       0, 20, _W, font=FONT_TITLE, fill=MINT)
 ctext("Closure queue + signal primitives. Single entry per concern. "
       "Observability built in.",
       0, 56, _W, font=FONT, fill=SUBTLE)
 
-# Preview banner
+# Implementation banner
 rbox(80, 82, 1340, 26, fill="#2a3a2a", outline=MINT, r=4, lw=1)
-ctext("Not yet implemented — compare against natlink_postmsg_deferral.png "
-      "to see the diff",
+ctext("Current implementation (src/natlink_com/_hidden_wnd.py). "
+      "Compare against natlink_postmsg_deferral.png for background.",
       0, 87, _W, font=FONT_SMALL, fill=MINT)
 
 # ============================================================
@@ -485,14 +488,14 @@ for name, lvl, desc, color in rows_obs:
 # SECTION 6: What's gone vs. what replaces it
 # ============================================================
 SEC6_Y = SEC5_Y + 210
-ctext("Deleted vs. Replaced",
+ctext("What Went Away  (vs. the earlier stash-based pump)",
       0, SEC6_Y, _W, font=FONT_SECTION, fill=CRIMSON)
 
 sy = SEC6_Y + 30
 # Header
 rbox(80, sy, 1340, 24, fill="#3b3d52", outline="#4a4d68")
-txt("Today", 95, sy + 4, font=FONT_BOLD, fill=CRIMSON)
-txt("After refactor", 700, sy + 4, font=FONT_BOLD, fill=MINT)
+txt("Removed", 95, sy + 4, font=FONT_BOLD, fill=CRIMSON)
+txt("Replacement (current)", 700, sy + 4, font=FONT_BOLD, fill=MINT)
 sy += 28
 pairs = [
     ("stash_put / stash_pop / stash_and_post",

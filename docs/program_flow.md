@@ -9,42 +9,57 @@ This document describes how natlink connects to Dragon, processes speech recogni
 
 ## Launcher Startup
 
-When `natlink start` runs (entry point `natlink_compat._cli:main` → `natlink_compat._launcher.run()`):
+Entry point: `natlink_compat._cli:main` → `natlink_compat._launcher.run()`.
+`run()` is a pure composition of six phase functions, each independently
+callable (see `src/natlink_compat/_launcher.py:1-19`):
 
-1. **Acquire single-instance mutex** — prevents duplicate launchers.
-2. **Phase 1 — Discover loaders**: calls `discover_loaders()` which imports loader modules via entry points and calls each module's optional `setup()` hook. Loaders may call `set_ui_provider()` at import time or in `setup()` to register a replacement provider early.
-3. **Discover UI provider** — if no provider was registered yet, the launcher selects one `natlink.ui_provider` entry point, preferring non-`default` entries over the shipping `natlink_ui` provider. If entry point discovery finds nothing, it falls back to a direct `natlink_ui` import.
-4. **Set phase `waiting_for_dragon`** — the active provider updates its UI to show the waiting state.
-5. **Wait for Dragon window** — uses `SetWinEventHook(EVENT_OBJECT_CREATE)` for zero-polling detection of Dragon's `DgnBarMainWindowCls` window. Optionally auto-launches Dragon if configured.
-6. **Set phase `connecting`** — probe COM readiness with `CoCreateInstance(DgnSite)` using exponential backoff (0.5s, 1s, 2s, 4s..., max 30s) until Dragon's COM server responds.
-7. **Set phase `loading_profile`** — wait for Dragon's user profile to finish loading (detected via Dragon's log file).
-8. **Phase 2 — Connect COM**: calls `_connect_com()` (see Connection Flow below).
-9. **Phase 3 — Activate**: calls `_activate()` which sets phase to `connected`, starts loaders.
-10. **Main loop** — uses `MsgWaitForMultipleObjects` to wait on two named events (`NatlinkShutdown` and `NatlinkRestartDragon`) plus Windows messages. Pumps messages, drains deferred callbacks, and handles Dragon monitor events (exit/reappear) on each iteration.
+1. **`_init_process`** — acquire single-instance mutex (`NatlinkLauncherMutex`),
+   set STA (`sys.coinit_flags = 2`), insert `src` on `sys.path`,
+   `CoInitializeEx(STA)`, init file logging, load `natlink.ini`.
+2. **`_discover_subsystems`** — call `discover_loaders()` (imports loader
+   modules via `natlink.loaders` entry points and runs their optional
+   `setup()` hooks). If no UI provider was installed by a loader, resolve
+   one via `natlink.ui_provider` entry points (non-`default` entries
+   preferred), falling back to a direct `natlink_ui.UIProvider` import.
+3. **`_create_events`** — allocate the four Win32 event handles bundled
+   on `LauncherEvents`: `shutdown` (`NatlinkShutdown`), `restart`
+   (`NatlinkRestartDragon`), `dragon_exited` (`NatlinkDragonExited`),
+   `dragon_reappeared` (`NatlinkDragonReappeared`).
+4. **`_wait_and_connect`** — set phase `waiting_for_dragon`;
+   auto-launch Dragon if `[settings] auto_launch_dragon = true`; wait
+   for Dragon's `DgnBarMainWindowCls` window via
+   `SetWinEventHook(EVENT_OBJECT_CREATE)` (falling back to polling); probe
+   COM readiness with `CoCreateInstance(DgnSite)` and exponential backoff
+   (0.5s, 1s, 2s, 4s..., max 30s); wait for profile load via Dragon's
+   log (skipped when Dragon was already running before we started);
+   call `natConnect(discovered_loaders=discovered)`; start the Dragon
+   process monitor.
+5. **`_pump_loop`** — register four `(handle, callback)` pairs on the
+   session via `register_wait()`; call `session.pump_until_stopped()`
+   which loops on `pump(h_events=[...])` and invokes the callback whose
+   handle fired. Callbacks handle shutdown, Dragon-restart requests,
+   Dragon-exited (monitor-signaled), and Dragon-reappeared. A callback
+   returning `True` stops the pump.
+6. **`_teardown`** — stop the monitor, call `natDisconnect()` if still
+   connected, stop the UI provider, close all event handles.
+
+Restart and reconnect reuse the same `_probe_and_wait` and `_connect`
+helpers. The launcher (not `natConnect`) owns the Dragon process monitor
+because only the pump loop consumes the events it signals.
 
 ## Connection Flow
 
-Connection happens in three phases, orchestrated by `natConnect()` (or called individually by the launcher).
+`natConnect(bUseThreads=False, *, discovered_loaders=None)` runs in two
+internal phases:
 
-### Phase 1: Discover Loaders — `discover_loaders()`
-
-1. Imports loader modules discovered via `natlink.loaders` entry points.
-2. Calls each module's optional `setup()` function. Loaders may call `set_ui_provider()` here to register a provider before the COM connection happens.
-3. Returns a list of `(module, module_name)` tuples. Does **not** start loaders yet.
+- If `discovered_loaders` is not provided, `discover_loaders()` is called
+  (the launcher always threads its cached list through so loader `setup()`
+  hooks run exactly once per process).
+- `_establish_com_connection()` then `_activate(discovered)`.
 
 See [Natlink](third_party/index.md) for the public loader contract.
 
-### Phase 2: UI Provider Discovery
-
-If discovery did not register a provider, the launcher loads
-`natlink.ui_provider` entry points and selects one provider. Non-`default`
-entries take precedence over the shipping tray provider. If no entry point
-loads successfully, natlink falls back to importing `natlink_ui.UIProvider`
-directly.
-
-### Phase 3: COM Connection — `_connect_com()`
-
-Pure COM connection with no UI side effects:
+### Phase A: COM Connection — `_establish_com_connection()`
 
 1. **Acquire connection mutex** (`NatlinkConnectionActive`) — warns if another natlink process is already connected.
 2. **Initialize deferred callback infrastructure** — creates the hidden message window used for cross-thread callback dispatch.
@@ -64,14 +79,23 @@ Pure COM connection with no UI side effects:
    - Gets Dragon version via `IDgnSREngineControlW::GetVersion()`
 5. **Register callbacks** — connects the backend's sink events to natlink's callback dispatch system.
 
-### Phase 4: Activation — `_activate()`
+### Phase B: Activation — `_activate(discovered)`
 
-1. **Display startup diagnostics** in Dragon's Messages window (Python version, natlinkcore version).
-2. **Set up logging** — rotating file handler + message window handler, redirect stdout/stderr through `displayText`.
-3. **Register atexit handler** for clean disconnect on interpreter shutdown.
-4. **Set phase `connected`** — the active provider receives a connected state snapshot.
-5. **Start Dragon monitor thread** if not already running.
-6. **Start loaders** — calls `start()` on each loader discovered in Phase 1.
+1. **Display startup banner** in the output surface (Python version, loader
+   versions, or warnings if all loaders are disabled / none discovered).
+2. **Set up logging and redirect** — message-window handler, redirect
+   stdout/stderr through `notify_text()`.
+3. **Cache mic + user state** for UI snapshots (avoids COM calls in
+   callbacks).
+4. **Set phase `connected`** — the active provider receives a connected
+   state snapshot.
+5. **Start loaders** — calls `start_loader()` on each discovered loader
+   and fires `_on_loaders_changed()` once.
+
+The Dragon process monitor is started by the launcher's
+`_start_monitor_if_needed(session)`, not by `_activate`. An `atexit`
+handler registered at `_lifecycle` import time ensures emergency disconnect
+if the process exits while still connected.
 
 ## UI State Transitions
 
@@ -135,26 +159,37 @@ Natlink can restart Dragon without restarting itself (e.g., from the tray menu's
 
 ### Signal Path
 
-1. **`signal_restart()`** — called from a UI action or another controller thread. Opens the `NatlinkRestartDragon` named event and sets it.
-2. **Main loop detects the event** — `MsgWaitForMultipleObjects` returns `WAIT_OBJECT_0 + 1`.
-3. **`_do_restart_on_main(natlink)`** runs on the main thread (COM-safe, since the main thread owns COM objects).
+1. **`signal_restart()`** — called from a UI action or another controller
+   thread. Opens the `NatlinkRestartDragon` named event and sets it.
+2. **Pump wakes** — `pump(h_events=[...])` returns the restart handle's
+   index; `pump_until_stopped` invokes the registered `on_restart`
+   callback.
+3. **`_do_restart_on_main(session, natlink)`** runs on the main thread
+   (COM-safe, since the main thread owns COM objects). Guarded by
+   `_restart_lock`; a duplicate restart is logged and ignored.
 
 ### Restart Sequence
 
-The restart runs entirely on the main thread:
+The restart runs entirely on the main thread. `_dragon.stop` / `_dragon.start`
+do not accept a shutdown handle, so `_aborting(session)` is polled
+between every stage — if shutdown was signaled, the restart bails out
+early and `_teardown` observes the same event on the next pump
+iteration.
 
 1. **Set phase `restarting`** — the active provider receives the restart phase.
 2. **Stop Dragon monitor** — prevents the monitor from interfering during restart.
-3. **Save current profile** — calls `save_profile()` via Dragon's COM interface.
-4. **Disconnect COM** — calls `natDisconnect()` to cleanly release all COM resources.
-5. **`gc.collect()`** — ensures Python releases any lingering COM reference cycles before Dragon exits.
-6. **Close Dragon gracefully** — sends `WM_CLOSE` to Dragon's windows. Waits up to 20 seconds for the process to exit. Falls back to force-kill if Dragon does not exit gracefully.
-7. **Launch Dragon** — calls `dragon_start(wait=30)`.
-8. **Set phase `waiting_for_dragon`** — wait for Dragon's main window to appear.
-9. **Set phase `connecting`** — probe COM readiness with exponential backoff.
-10. **Set phase `loading_profile`** — wait for the user profile to load (detected via Dragon's log file).
-11. **Reconnect** — calls `natConnect()` which runs the full three-phase connection flow. On success, displays a restart confirmation message.
-12. **On failure** — sets phase to `error` with the exception message.
+3. **Save current profile** via `_dragon.save_profile(conn)` while COM is still live.
+4. **Disconnect COM** — `natDisconnect()` to cleanly release all COM resources.
+5. **`gc.collect()`** — releases lingering COM reference cycles before Dragon exits.
+6. **Close Dragon** — `_dragon.stop(force=False)` sends `WM_CLOSE`, waits, falls back to force-kill.
+7. **Launch Dragon** — `_dragon.start(wait=30)`.
+8. **`_probe_and_wait(wait_for_window=True, wait_for_profile=True)`** —
+   phases `waiting_for_dragon` → `connecting` → `loading_profile`.
+9. **Reconnect** — `_connect(natlink, session.discovered)` threads the
+   cached loader list so `setup()` hooks do not re-run.
+   `_start_monitor_if_needed(session)` restarts the monitor. On success
+   notifies `[Dragon restarted successfully.]`.
+10. **On failure** — sets phase `error` with the exception message.
 
 ## Speech Recognition Flow
 
@@ -162,23 +197,34 @@ The restart runs entirely on the main thread:
 
 When Dragon starts processing an utterance:
 
-1. Dragon calls the engine sink's `Paused` method with a cookie.
-2. The engine sink posts `WM_PAUSED` to the hidden window. The handler calls `_do_paused`, which dispatches to `_on_paused()`:
-   - Retrieves foreground module info via `get_current_module()` (COM call — may enter modal loop, must happen **before** setting `during_paused`)
-   - Sets `during_paused = True`
-   - Calls the user's begin callback with `(moduleInfo,)`
-   - Sets `during_paused = False`
-3. `ISRCentralW::Resume(cookie)` is called after `_on_paused` returns. `_resume_count` is incremented.
+1. Dragon calls the engine sink's `Paused(qCookie)` method.
+2. The engine sink calls `_hidden_wnd.dispatch(self._do_paused, qCookie,
+   channel=WM_PAUSED)` — a closure on the per-channel deque; the pump's
+   `wndproc` drains it on the next `DispatchMessage`.
+3. `_do_paused(qCookie)` runs on the STA main thread. If
+   `_pause_recog > 0` (results still pending), the cookie is appended
+   to `_deferred_cookies` and returns; otherwise `_do_paused_processing`
+   fires the begin callback (`on_paused_dispatch`) then
+   `ISRCentralW::Resume(qCookie)`, incrementing `_resume_count`.
 
 ### Phrase Finish
 
 When Dragon completes recognition of a phrase:
 
-1. The grammar sink's `PhraseFinish` method is called with the recognition result data (`SRPHRASEW` structure).
-2. The grammar sink creates a `ComResObj` wrapping the result.
-3. The grammar sink calls `_on_results_callback(resObj)` which dispatches to the appropriate `GramObj.resultsCallback`.
-4. The `GramObj` calls the user-registered `gotResultsObject`, `gotResults`, or `gotResultsInit` methods as appropriate.
-5. After the callback returns, `ISRCentralW::Resume()` is called.
+1. The grammar sink's `PhraseFinish` method receives the `SRPHRASEW`
+   result on an RPC thread, parses it, wraps a `ComResObj`, AddRefs the
+   underlying `IUnknown`, increments `pause_recog`, and calls
+   `conn.defer_send_results(gram_handle, dwFlags, res_obj)` —
+   handle-keyed routing owned by the connection so closures capture the
+   connection (long-lived) rather than the grammar sink (unloadable).
+   `defer_send_results` dispatches on `WM_SENDRESULTS`.
+2. `wndproc` drains the closure on the STA main thread, which looks up
+   the grammar in `_grammar_sinks[handle]` and calls
+   `_do_phrase_finish(...)`. If the grammar has been unloaded during
+   the race, `reset_pause_recog()` unwinds the guard and returns.
+3. The user's `gotResultsObject` / `gotResults` / `gotResultsInit` runs;
+   `pause_recog--`; deferred `Paused` cookies (if any) are processed
+   and `Resume` is called on the main thread.
 
 ### Hypothesis
 
@@ -188,17 +234,24 @@ For grammar sinks registered with hypothesis notifications, Dragon calls `Phrase
 
 All four sync operations (`recognitionMimic`, `playString`, `playEvents`,
 `execScript`) use the same completion architecture, matching the original C++
-`CDragonCode::messageLoop` pattern:
+`CDragonCode::messageLoop` pattern. Completion channels are posted via
+`_hidden_wnd.signal(msg, wparam, lparam, data=...)` rather than a closure
+queue — the real Win32 `wparam`/`lparam` values travel in the `MSG` struct
+so `pump.message_loop` can match waiters by client code. Each sink
+advertises its completion channels via a `completion_channels()` function;
+`DragonConnection._register_completion_handlers()` wires these to the
+pump's `trigger_message` on connect.
 
 1. **Unique client code**: each call generates a unique client code. Dragon
-   echoes it back in the completion callback (`MimicDone`, `PlaybackDone`,
-   `ExecutionDone`).
-2. **PostMessage**: completion callbacks post to the hidden window with the
-   completion message and client code.
-3. **TriggerMessage / message_loop**: `push_message_entry` registers the
-   expected `(message, wParam)` pair. `message_loop` pumps messages and checks
-   for the expected completion before and during normal dispatch, including the
-   pre-consumed COM modal-loop case.
+   echoes it back in the completion callback.
+2. **signal()**: completion callbacks call `_hidden_wnd.signal(WM_*, code,
+   status)`; optional payloads (e.g. `ExecutionAborted` error string)
+   travel via the `data=` sidecar, retrieved with `take_signal_data`.
+3. **message_loop**: `push_message_entry` registers the expected
+   `(message, wParam)` pair. `message_loop` pumps messages and calls
+   `trigger_message` both from the `wndproc` (for dispatches reaching
+   the handler) and from the `PeekMessage` pre-dispatch loop (for the
+   COM modal-loop pre-consumed case).
 4. **Start callback**: the `start` callback drains pending messages before
    issuing the COM call, so stale paused/resume traffic from a previous cycle
    is handled first.
@@ -233,7 +286,11 @@ See [Consecutive recognitionMimic](technical-limitations.md#consecutive-recognit
 
 1. `_testFileName` validates the file exists and has a legal extension (`.utd`, `.utt`, `.utb`, `.wav`, `.nwv`). A re-entrancy guard prevents nested `inputFromFile` calls (Dragon supports only one active audio source).
 2. `NatlinkCOM.input_from_file()` calls `IDgnSRAudioFileSourceW::LoadFile` then starts playback.
-3. The engine sink's `AttribChanged2` posts `WM_ATTRIBCHANGED` with `DGNSRAC_PLAYBACKDONE`, which sets the `playback_done` Win32 event.
+3. The engine sink's `AttribChanged2(dwCode)` fires both
+   `signal(WM_ATTRIBCHANGED, dwCode)` — used by `pump.message_loop` for
+   sync-op completion — and `dispatch(self._dispatch_attrib_changed,
+   dwCode, channel=WM_ATTRIBCHANGED_WORK)` for the Python-side
+   `on_attrib_changed` callback.
 4. `pump()` waits on the event handle via `MsgWaitForMultipleObjects` until signaled or timeout (5 min).
 
 ## Shutdown
@@ -242,30 +299,46 @@ See [Consecutive recognitionMimic](technical-limitations.md#consecutive-recognit
 
 The launcher shuts down cleanly without `os._exit()`. The sequence:
 
-1. **Signal** — an external process or UI action calls `request_shutdown()`, which opens and sets the `NatlinkShutdown` named event.
-2. **Main loop exits** — `MsgWaitForMultipleObjects` returns `WAIT_OBJECT_0`, breaking out of the `while True` loop.
-3. **Disconnect** — if still connected, calls `natDisconnect()` (see below).
-4. **Stop UI** — calls `stop()` on the active provider if one is registered.
-5. **Close event handles** — releases the shutdown and restart event handles.
-6. **Process exits normally** — the main function returns, Python runs atexit handlers, and the process exits cleanly.
+1. **Signal** — an external process or UI action calls `request_shutdown()`,
+   which opens and sets the `NatlinkShutdown` named event.
+2. **Pump stops** — the `on_shutdown` callback registered in `_pump_loop`
+   returns `True`, causing `pump_until_stopped()` to return.
+3. **`_teardown(session, natlink)`** runs:
+   - `session.stop_monitor()`
+   - `natDisconnect()` if still connected
+   - `stop_provider(provider)` on the active UI provider (if any)
+   - `session.events.close()` releases all four event handles.
+4. **Process exits normally** — `run()` returns, atexit runs
+   `_atexit_disconnect` as a safety net, the process exits.
 
 ### natDisconnect Teardown
 
-When `natDisconnect()` is called (either during shutdown or explicitly by user code):
+When `natDisconnect()` is called (either during shutdown or explicitly
+by user code):
 
-1. **Stop Dragon monitor** — unless called from the monitor thread itself (auto-disconnect on Dragon exit needs the monitor to stay alive for reconnection).
-2. **Stop all active loaders** — calls `stop()` on each.
-3. **Set disconnect event** — unblocks `waitForSpeech` and posts `WM_APP` to wake any message loop.
-4. **Cancel timer callback** if active.
-5. **Unregister sinks** — calls `backend.unregister_sinks()` to stop Dragon from sending callbacks. This must happen before releasing COM interfaces to prevent deadlocks from in-flight RPC callbacks.
-6. **Clear callback slots** — `_callbacks.unregister_all()`.
-7. **Drain deferred callbacks** and shut down the deferred callback window.
-8. **Remove logging handlers** — stops provider text dispatch from logging, restores stdout/stderr.
-9. **Tear down objects** — unloads all grammar objects (`GramObj.unload()`), destroys dictation objects, destroys result objects.
-10. **Disconnect backend** — calls `DragonConnection.disconnect()`:
-    - Releases all COM interface references
-    - Releases `IServiceProvider`
-    - Revokes marshal DLL class registration and frees the DLL
-11. **Set phase `idle`** — the active provider receives the disconnected state.
-12. **Release connection mutex** — allows other natlink processes to connect without warning.
-13. **Reset all connection state**.
+1. **`conn.begin_shutdown()`** — flips `_shutting_down=True` so the
+   connection's `defer_*` routers and hidden-window `dispatch()` reject
+   new work at the source. Ensures sink callbacks fired during teardown
+   unwind cleanly instead of racing the queue clear in `_hidden_wnd.destroy()`.
+2. **Set phase `idle`** — the UI provider updates immediately (COM
+   teardown may block if Dragon is gone).
+3. **Disable COM timer** if any timer callback is registered.
+4. **Stop all active loaders** — calls `stop()` on each.
+5. **Set disconnect event** — `_state._disconnect_event_handle` (Win32
+   manual-reset event) is set, unblocking `waitForSpeech`.
+6. **Unregister sinks** — `backend.unregister_sinks()` stops Dragon from
+   sending callbacks. Must happen before releasing COM interfaces to
+   prevent deadlocks from in-flight RPC callbacks.
+7. **Clear callback slots** — `_callbacks.unregister_all()` (runs
+   *after* `unregister_sinks` so in-flight callbacks still have the
+   slots they need to call `Resume`).
+8. **Teardown logging** — removes log handlers, restores stdout/stderr.
+9. **Tear down objects** — unloads all grammar objects, destroys
+   dictation objects.
+10. **`backend.disconnect()`** — `DragonConnection.disconnect()` releases
+    all COM interface references in the correct order, releases
+    `IServiceProvider`. The marshal DLL is registered once per process
+    and never revoked.
+11. **`_state.reset()`** — clears all registries, resets
+    `_disconnect_event_handle`, releases the `NatlinkConnectionActive`
+    mutex.

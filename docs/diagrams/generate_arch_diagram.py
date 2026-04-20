@@ -81,7 +81,7 @@ y = 248
 rounded_box(y, 72)
 center_text("natlink_compat", y + 6, fill=TEXT_COLOR)
 left_text("Public API: GramObj, ResObj, DictObj, natConnect/Disconnect", MARGIN + 20, y + 28, font=FONT, fill=SUBTLE)
-left_text("Callbacks, state, orchestrator, lifecycle, loader registry", MARGIN + 20, y + 48, font=FONT, fill=SUBTLE)
+left_text("Callbacks, state, phase-structured launcher, lifecycle, loader registry", MARGIN + 20, y + 48, font=FONT, fill=SUBTLE)
 
 draw_arrow(W // 2, y + 72, y + 72 + 22)
 
