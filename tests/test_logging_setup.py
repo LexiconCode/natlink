@@ -83,7 +83,7 @@ class TestNotifyTextHandler(unittest.TestCase):
 
         rec = logging.LogRecord(name="x", level=logging.INFO, pathname="",
                                 lineno=0, msg="hello", args=(), exc_info=None)
-        with patch("natlink_compat._ui_dispatch.notify_text", side_effect=fake):
+        with patch("natlink_compat._ui_protocol.notify_text", side_effect=fake):
             h.emit(rec)
         self.assertEqual(len(calls), 1)
 
@@ -92,7 +92,7 @@ class TestNotifyTextHandler(unittest.TestCase):
         h.setFormatter(logging.Formatter("%(message)s"))
         rec = logging.LogRecord(name="x", level=logging.INFO, pathname="",
                                 lineno=0, msg="", args=(), exc_info=None)
-        with patch("natlink_compat._ui_dispatch.notify_text", side_effect=RuntimeError):
+        with patch("natlink_compat._ui_protocol.notify_text", side_effect=RuntimeError):
             h.emit(rec)  # should not raise
 
 

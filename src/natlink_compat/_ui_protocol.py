@@ -87,3 +87,93 @@ class UIProvider(Protocol):
     def stop(self) -> None:
         """Clean up resources on shutdown."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Dispatch helpers — build snapshots and push to the active provider.
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+import threading as _threading
+
+_log = _logging.getLogger("natlink.compat.ui_dispatch")
+_guard = _threading.local()
+
+
+def build_state_snapshot() -> NatlinkState:
+    """Immutable snapshot of current natlink state built from `_state` cache.
+
+    Uses cached values instead of live COM calls to avoid deadlocks during
+    deferred callback processing.
+    """
+    from ._state import _state
+    with _state.lock:
+        phase = _state.phase
+        error_msg = _state.error_message
+        backend = _state.backend
+        connected = backend is not None and phase == PHASE_CONNECTED
+        mic = _state.last_mic_state
+        user = _state.last_user_name
+        user_dir = _state.last_user_dir
+        loader_states = _state.last_loader_states
+
+    version = (0, 0, 0)
+    if backend is not None:
+        try:
+            version = backend.dragon_version
+        except Exception:
+            pass
+
+    return NatlinkState(
+        connected=connected,
+        phase=phase,
+        mic_state=mic,
+        user_name=user,
+        user_directory=user_dir,
+        dragon_version=version,
+        loader_states=loader_states,
+        error_message=error_msg,
+    )
+
+
+def set_phase(phase: str, error: str = ""):
+    """Set the current phase and notify the active UI provider."""
+    from ._state import _state
+    with _state.lock:
+        _state.phase = phase
+        _state.error_message = error
+    notify_ui()
+
+
+def notify_ui():
+    """Push a fresh state snapshot to the active UI provider (if any)."""
+    from ._state import _state
+    provider = _state.ui_provider
+    if provider is None:
+        return
+    snapshot = build_state_snapshot()
+    try:
+        provider.on_state_changed(snapshot)
+    except Exception:
+        _log.debug("UIProvider.on_state_changed failed", exc_info=True)
+
+
+def notify_text(text: str, level: int = _logging.INFO):
+    """Push text to the active UI provider.
+
+    Guarded against re-entry so provider code that emits log output
+    (which would round-trip through notify_text) cannot recurse.
+    """
+    if getattr(_guard, "active", False):
+        return
+    from ._state import _state
+    provider = _state.ui_provider
+    if provider is None:
+        return
+    _guard.active = True
+    try:
+        provider.on_text(text, level)
+    except Exception:
+        _log.debug("UIProvider.on_text failed", exc_info=True)
+    finally:
+        _guard.active = False

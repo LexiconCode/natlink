@@ -259,7 +259,7 @@ class TestDisplayText(unittest.TestCase):
         def fake_notify(text, level=20):
             captured.append((text, level))
 
-        with patch("natlink_compat._ui_dispatch.notify_text", fake_notify):
+        with patch("natlink_compat._ui_protocol.notify_text", fake_notify):
             from natlink_compat._legacy import displayText
             displayText("hello\r\n", False)
             displayText("error\r\n", True)
@@ -271,7 +271,7 @@ class TestDisplayText(unittest.TestCase):
     def test_fallback_to_stdout(self):
         import io
         fake_stdout = io.StringIO()
-        with patch("natlink_compat._ui_dispatch.notify_text",
+        with patch("natlink_compat._ui_protocol.notify_text",
                    side_effect=ImportError):
             with patch("sys.__stdout__", fake_stdout):
                 from natlink_compat._legacy import displayText

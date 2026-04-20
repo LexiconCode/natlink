@@ -173,8 +173,7 @@ def _activate(discovered):
     owned by ``natlink_compat._launcher._start_monitor_if_needed``.
     """
     from ._logging_setup import _setup_logging_and_redirect
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_CONNECTED
+    from ._ui_protocol import PHASE_CONNECTED, set_phase
 
     _display_startup_banner(discovered)
     _setup_logging_and_redirect()
@@ -240,8 +239,7 @@ def natDisconnect() -> None:
     This will cause Dragon to stop running if it was launched by natConnect.
     All grammars, result objects, and dictation objects are invalidated.
     """
-    from ._ui_dispatch import set_phase
-    from ._ui_protocol import PHASE_IDLE
+    from ._ui_protocol import PHASE_IDLE, set_phase
 
     log.info("natDisconnect: cleaning up...")
 

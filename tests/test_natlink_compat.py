@@ -402,7 +402,7 @@ class TestUIProviderContract(unittest.TestCase):
 
     def test_text_and_state_dispatch_reach_active_provider(self):
         from natlink_compat._state import _state
-        from natlink_compat._ui_dispatch import notify_text, notify_ui
+        from natlink_compat._ui_protocol import notify_text, notify_ui
 
         class Provider:
             def __init__(self):

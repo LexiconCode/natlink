@@ -12,20 +12,20 @@ class TestOutputRedirector(unittest.TestCase):
         from natlink_ui._stream_redirect import _OutputRedirector
         return _OutputRedirector(level=level)
 
-    @patch("natlink_compat._ui_dispatch.notify_text")
+    @patch("natlink_compat.notify_text")
     def test_write_dispatches_text_at_level(self, mock_notify):
         r = self._make(level=logging.ERROR)
         self.assertEqual(r.write("err"), 3)
         mock_notify.assert_called_once_with("err", level=logging.ERROR)
 
-    @patch("natlink_compat._ui_dispatch.notify_text")
+    @patch("natlink_compat.notify_text")
     def test_write_skips_blank(self, mock_notify):
         r = self._make()
         self.assertEqual(r.write(""), 0)
         self.assertEqual(r.write("  \n"), 3)
         mock_notify.assert_not_called()
 
-    @patch("natlink_compat._ui_dispatch.notify_text", side_effect=RuntimeError)
+    @patch("natlink_compat.notify_text", side_effect=RuntimeError)
     def test_write_survives_exception(self, _):
         self.assertEqual(self._make().write("x"), 1)
 
