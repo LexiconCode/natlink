@@ -28,7 +28,7 @@ from ._logging_control import (
     list_log_presets, apply_log_preset,
 )
 from ._speech import playString, playEvents, execScript, recognitionMimic
-from ._ui_dispatch import notify_text
+from ._ui_protocol import notify_text
 from ._legacy import setMessageWindow, displayText
 from ._system import (getClipboard, getCursorPos, getScreenSize, getCurrentModule,
                       getCurrentUser, getMicState, setMicState, inputFromFile, getCallbackDepth)

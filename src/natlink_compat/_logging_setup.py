@@ -159,7 +159,7 @@ class _NotifyTextHandler(logging.Handler):
             return
         self._guard.in_emit = True
         try:
-            from ._ui_dispatch import notify_text
+            from ._ui_protocol import notify_text
             msg = self.format(record) + "\r\n"
             notify_text(msg, level=record.levelno)
         except Exception:
@@ -452,7 +452,7 @@ def ensure_natlinkcore_logging() -> None:
         return
 
     try:
-        from ._ui_dispatch import notify_text
+        from ._ui_protocol import notify_text
         for entry in _state.loader_registry:
             loader = entry.loader
             bad = getattr(loader, "bad_modules", set())

@@ -68,7 +68,7 @@ def _unregister(loader):
 def _display(text, level=20):
     """Write to the message window if available."""
     try:
-        from ._ui_dispatch import notify_text
+        from ._ui_protocol import notify_text
         notify_text(text, level)
     except Exception:
         log.debug("_display failed", exc_info=True)
@@ -79,7 +79,7 @@ def _on_loaders_changed():
     try:
         from ._actions import _refresh_loader_states
         _refresh_loader_states()
-        from ._ui_dispatch import notify_ui
+        from ._ui_protocol import notify_ui
         notify_ui()
     except Exception:
         log.debug("_on_loaders_changed failed", exc_info=True)

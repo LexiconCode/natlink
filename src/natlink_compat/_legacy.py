@@ -44,7 +44,7 @@ def displayText(text: str, isError: bool = False, logText: bool = True) -> None:
             (not implemented in this shim).
     """
     try:
-        from ._ui_dispatch import notify_text
+        from ._ui_protocol import notify_text
         notify_text(text, level=logging.ERROR if isError else logging.INFO)
     except Exception:
         import sys

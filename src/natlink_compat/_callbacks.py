@@ -519,7 +519,7 @@ def _on_attrib_changed(dwCode):
         if user != _state.last_user_name or directory != _state.last_user_dir:
             _state.last_user_name = user
             _state.last_user_dir = directory
-            from ._ui_dispatch import notify_ui
+            from ._ui_protocol import notify_ui
             notify_ui()
             dispatch_change_callback("user", user, directory)
 
@@ -532,7 +532,7 @@ def _on_attrib_changed(dwCode):
         log.getChild("change").info("mic state → %s", mic)
         if mic != _state.last_mic_state:
             _state.last_mic_state = mic
-            from ._ui_dispatch import notify_ui
+            from ._ui_protocol import notify_ui
             notify_ui()
             dispatch_change_callback("mic", mic)
 
