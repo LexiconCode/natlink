@@ -10,42 +10,38 @@ This document describes how natlink connects to Dragon, processes speech recogni
 ## Launcher Startup
 
 Entry point: `natlink_compat._cli:main` → `natlink_compat._launcher.run()`.
-`run()` is a pure composition of six phase functions, each independently
-callable (see `src/natlink_compat/_launcher.py:1-19`):
+`run()` is a straight-line procedure (`src/natlink_compat/_launcher.py`):
 
-1. **`_init_process`** — acquire single-instance mutex (`NatlinkLauncherMutex`),
+1. **Init** — acquire single-instance mutex (`NatlinkLauncherMutex`),
    set STA (`sys.coinit_flags = 2`), insert `src` on `sys.path`,
    `CoInitializeEx(STA)`, init file logging, load `natlink.ini`.
-2. **`_discover_subsystems`** — call `discover_loaders()` (imports loader
-   modules via `natlink.loaders` entry points and runs their optional
-   `setup()` hooks). If no UI provider was installed by a loader, resolve
-   one via `natlink.ui_provider` entry points (non-`default` entries
-   preferred), falling back to a direct `natlink_ui.UIProvider` import.
-3. **`_create_events`** — allocate the four Win32 event handles bundled
-   on `LauncherEvents`: `shutdown` (`NatlinkShutdown`), `restart`
-   (`NatlinkRestartDragon`), `dragon_exited` (`NatlinkDragonExited`),
-   `dragon_reappeared` (`NatlinkDragonReappeared`).
-4. **`_wait_and_connect`** — set phase `waiting_for_dragon`;
-   auto-launch Dragon if `[settings] auto_launch_dragon = true`; wait
-   for Dragon's `DgnBarMainWindowCls` window via
-   `SetWinEventHook(EVENT_OBJECT_CREATE)` (falling back to polling); probe
-   COM readiness with `CoCreateInstance(DgnSite)` and exponential backoff
-   (0.5s, 1s, 2s, 4s..., max 30s); wait for profile load via Dragon's
-   log (skipped when Dragon was already running before we started);
-   call `natConnect(discovered_loaders=discovered)`; start the Dragon
-   process monitor.
-5. **`_pump_loop`** — register four `(handle, callback)` pairs on the
-   session via `register_wait()`; call `session.pump_until_stopped()`
-   which loops on `pump(h_events=[...])` and invokes the callback whose
-   handle fired. Callbacks handle shutdown, Dragon-restart requests,
-   Dragon-exited (monitor-signaled), and Dragon-reappeared. A callback
-   returning `True` stops the pump.
-6. **`_teardown`** — stop the monitor, call `natDisconnect()` if still
-   connected, stop the UI provider, close all event handles.
+2. **Discovery** — `discover_loaders()` (imports loader modules via
+   `natlink.loaders` entry points and runs their optional `setup()`
+   hooks). If no UI provider was installed by a loader, resolve one via
+   `natlink.ui_provider` entry points (non-`default` preferred), falling
+   back to a direct `natlink_ui.UIProvider` import.
+3. **Launcher** — construct `Launcher` holding the four Win32 event
+   handles (`shutdown`, `restart`, `dragon_exited`, `dragon_reappeared`)
+   plus the discovered loader list.
+4. **`_wait_and_connect(launcher, cfg, natlink)`** — set phase
+   `waiting_for_dragon`; auto-launch Dragon if `[settings]
+   auto_launch_dragon = true`; wait for Dragon's `DgnBarMainWindowCls`
+   window via `SetWinEventHook(EVENT_OBJECT_CREATE)` (falling back to
+   polling); probe COM readiness; wait for profile load (skipped when
+   Dragon was already running); `natConnect(discovered_loaders=...)`;
+   start the Dragon process monitor.
+5. **`_pump_loop(launcher, natlink)`** — `pump(h_events=[shutdown,
+   restart, dragon_exited, dragon_reappeared], timeout_ms=2000)` on a
+   loop. An `if/elif` on the returned index dispatches to
+   `_do_restart_on_main`, `_handle_dragon_exited`, or
+   `_handle_dragon_reappeared`. Shutdown returns the pump.
+6. **`_teardown(launcher, natlink)`** — stop the monitor, call
+   `natDisconnect()` if still connected, stop the UI provider,
+   close all event handles.
 
-Restart and reconnect reuse the same `_probe_and_wait` and `_connect`
-helpers. The launcher (not `natConnect`) owns the Dragon process monitor
-because only the pump loop consumes the events it signals.
+Restart and reconnect reuse `_probe_and_wait` and `_connect`. The
+launcher (not `natConnect`) owns the Dragon process monitor because
+only the pump loop consumes the events it signals.
 
 ## Connection Flow
 
@@ -162,9 +158,9 @@ Natlink can restart Dragon without restarting itself (e.g., from the tray menu's
 1. **`signal_restart()`** — called from a UI action or another controller
    thread. Opens the `NatlinkRestartDragon` named event and sets it.
 2. **Pump wakes** — `pump(h_events=[...])` returns the restart handle's
-   index; `pump_until_stopped` invokes the registered `on_restart`
-   callback.
-3. **`_do_restart_on_main(session, natlink)`** runs on the main thread
+   index; the `if rc == _RESTART` branch in `_pump_loop` calls
+   `_do_restart_on_main`.
+3. **`_do_restart_on_main(launcher, natlink)`** runs on the main thread
    (COM-safe, since the main thread owns COM objects). Guarded by
    `_restart_lock`; a duplicate restart is logged and ignored.
 
@@ -185,7 +181,7 @@ iteration.
 7. **Launch Dragon** — `_dragon.start(wait=30)`.
 8. **`_probe_and_wait(wait_for_window=True, wait_for_profile=True)`** —
    phases `waiting_for_dragon` → `connecting` → `loading_profile`.
-9. **Reconnect** — `_connect(natlink, session.discovered)` threads the
+9. **Reconnect** — `_connect(natlink, launcher.discovered)` threads the
    cached loader list so `setup()` hooks do not re-run.
    `_start_monitor_if_needed(session)` restarts the monitor. On success
    notifies `[Dragon restarted successfully.]`.
@@ -301,13 +297,13 @@ The launcher shuts down cleanly without `os._exit()`. The sequence:
 
 1. **Signal** — an external process or UI action calls `request_shutdown()`,
    which opens and sets the `NatlinkShutdown` named event.
-2. **Pump stops** — the `on_shutdown` callback registered in `_pump_loop`
-   returns `True`, causing `pump_until_stopped()` to return.
-3. **`_teardown(session, natlink)`** runs:
-   - `session.stop_monitor()`
+2. **Pump returns** — `pump()` returns index `0` (shutdown), and the
+   `if rc == _SHUTDOWN: return` branch exits `_pump_loop`.
+3. **`_teardown(launcher, natlink)`** runs:
+   - `launcher.stop_monitor()`
    - `natDisconnect()` if still connected
    - `stop_provider(provider)` on the active UI provider (if any)
-   - `session.events.close()` releases all four event handles.
+   - `launcher.close_handles()` releases all four event handles.
 4. **Process exits normally** — `run()` returns, atexit runs
    `_atexit_disconnect` as a safety net, the process exits.
 
