@@ -22,6 +22,10 @@ class TestLiveRecognitionMimic:
                 lambda words, res: received.append((words, res)))
             gram.load(binary)
             gram.activate("rule", 0)
+            try:
+                gram.setExclusive(1)
+            except Exception:
+                pass
 
             do_mimic(["hello", "world"])
 

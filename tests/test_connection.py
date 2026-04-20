@@ -26,7 +26,8 @@ class TestState:
         assert len(_state.change_callbacks) == 0
         assert len(_state.grammar_registry) == 0
         assert len(_state.dict_registry) == 0
-        assert not _state._disconnect_event.is_set()
+        from natlink_com._win32 import kernel32 as _k32
+        assert _k32.WaitForSingleObject(_state._disconnect_event_handle, 0) != 0  # not signaled
 
 
 class TestPreConnection:

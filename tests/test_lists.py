@@ -26,6 +26,10 @@ class TestLiveListOperations:
             gram.activate("rule", 0)
             gram.emptyList("files")
             gram.appendList("files", "document")
+            try:
+                gram.setExclusive(1)
+            except Exception:
+                pass
             time.sleep(0.3)
 
             do_mimic(["open", "document"])

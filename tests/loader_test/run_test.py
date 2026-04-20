@@ -15,13 +15,12 @@ logging.basicConfig(level=logging.INFO,
 logging.getLogger("comtypes").setLevel(logging.WARNING)
 
 import natlink
-from natlink_compat._state import _state
 
 
 def main():
-    _state.skip_loader = True
-
-    with natlink.natConnect():
+    # Empty discovered_loaders gives a deterministic environment — no
+    # entry-point loaders leak in from the host machine.
+    with natlink.natConnect(discovered_loaders=[]):
         from tests.loader_test import loader_a, loader_b, loader_c
 
         for loader in [loader_a, loader_b, loader_c]:

@@ -116,6 +116,10 @@ class TestLiveCallbacks:
             gram.setResultsCallBack(lambda w, r: received.append((w, r)))
             gram.load(binary)
             gram.activate("rule", 0)
+            try:
+                gram.setExclusive(1)
+            except Exception:
+                pass
 
             do_mimic(["hello", "world"])
 
@@ -344,6 +348,10 @@ class TestLiveCallbacks:
                 lambda w, r: captured.append(r.getWordInfo(0)))
             gram.load(binary)
             gram.activate("rule", 0)
+            try:
+                gram.setExclusive(1)
+            except Exception:
+                pass
             do_mimic(["hello", "world"])
             assert len(captured) >= 1, "Results callback never fired"
             info = captured[0]

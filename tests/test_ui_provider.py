@@ -32,6 +32,30 @@ def _make_provider():
     return provider, mock_window
 
 
+class TestProviderContract(unittest.TestCase):
+    """UIProvider must satisfy the ABC declared in natlink_compat._ui_protocol."""
+
+    def test_instance_implements_protocol(self):
+        from natlink_compat._ui_protocol import UIProvider as UIProviderProtocol
+        provider, _ = _make_provider()
+        self.assertIsInstance(provider, UIProviderProtocol)
+
+    def test_handles_every_well_known_phase(self):
+        from natlink_compat._ui_protocol import (
+            PHASE_IDLE, PHASE_WAITING_FOR_DRAGON, PHASE_CONNECTING,
+            PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING, PHASE_ERROR,
+        )
+        provider, _ = _make_provider()
+        for phase in (PHASE_IDLE, PHASE_WAITING_FOR_DRAGON, PHASE_CONNECTING,
+                      PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING,
+                      PHASE_ERROR):
+            provider.on_state_changed(NatlinkState(phase=phase))
+
+    def test_stop_is_callable(self):
+        provider, _ = _make_provider()
+        provider.stop()
+
+
 class TestOnStateChanged(unittest.TestCase):
     """UIProvider.on_state_changed should update the tray icon and tooltip."""
 

@@ -103,6 +103,12 @@ def _load_and_test(gram_factory, binary, rule_name, mimic_words,
     g.load(binary)
     g.setResultsCallback(cb)
     g.activate(rule_name, 0)
+    # Exclusive: Dragon only considers this grammar while active, so
+    # the mimic can't be stolen by dictation or a sibling test grammar.
+    try:
+        g.setExclusive(True)
+    except Exception:
+        pass
 
     try:
         do_mimic(mimic_words, pause=1.5)
@@ -116,6 +122,10 @@ def _load_and_test(gram_factory, binary, rule_name, mimic_words,
             f"Expected {expected_words!r}, got {cb.results[-1]!r}"
         )
     finally:
+        try:
+            g.setExclusive(False)
+        except Exception:
+            pass
         try:
             g.deactivate(rule_name)
         except Exception:

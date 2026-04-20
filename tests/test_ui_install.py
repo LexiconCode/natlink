@@ -10,12 +10,12 @@ from unittest.mock import patch
 class TestInstallUI(unittest.TestCase):
 
     @patch("natlink_ui._shortcuts.create_desktop_shortcut", return_value=True)
-    @patch("natlink_com._config._print_config")
+    @patch("natlink_com._config.print_config")
     @patch("natlink_compat.configure_runtime")
     def test_install_ui_configures_runtime_and_desktop_shortcut(
         self,
         mock_configure_runtime,
-        mock_print_config,
+        mockprint_config,
         mock_create_desktop_shortcut,
     ):
         cfg = configparser.ConfigParser()
@@ -29,18 +29,18 @@ class TestInstallUI(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         mock_configure_runtime.assert_called_once_with()
-        mock_print_config.assert_called_once_with(cfg)
+        mockprint_config.assert_called_once_with(cfg)
         mock_create_desktop_shortcut.assert_called_once_with()
         self.assertIn("configured", mock_out.getvalue().lower())
 
     @patch("natlink_ui._shortcuts.install_startup", return_value=True)
     @patch("natlink_ui._shortcuts.create_desktop_shortcut", return_value=True)
-    @patch("natlink_com._config._print_config")
+    @patch("natlink_com._config.print_config")
     @patch("natlink_compat.configure_runtime")
     def test_install_ui_with_startup_installs_startup_shortcut(
         self,
         mock_configure_runtime,
-        mock_print_config,
+        mockprint_config,
         mock_create_desktop_shortcut,
         mock_install_startup,
     ):

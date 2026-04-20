@@ -183,25 +183,18 @@ def live_connection():
     import natlink_compat as natlink
     from natlink_compat._state import _state
 
-    # Skip loader auto-discovery and UI — tests don't need a tray icon
+    # Install a null UI provider — tests don't need a tray icon.
     class _NullUI:
         def on_state_changed(self, state): pass
         def on_text(self, text, level=20): pass
 
-    _state.skip_loader = True
     if _state.ui_provider is None:
         _state.ui_provider = _NullUI()
 
-    try:
-        natlink.natConnect()
-    except Exception:
-        _state.reset()
-        _state.skip_loader = True
-        _state.ui_provider = _NullUI()
-        natlink.natConnect()
-
-    # Stop monitor — tests manage their own connection lifecycle
-    _state.stop_dragon_monitor()
+    # Empty discovered_loaders tells the lifecycle "discovery happened, produced
+    # nothing" — gives tests a deterministic loader environment independent
+    # of whatever is installed on the machine.
+    natlink.natConnect(discovered_loaders=[])
 
     # Start with mic off so Dragon isn't listening during tests
     try:
@@ -252,7 +245,6 @@ def _ensure_connected(request):
                 _natlink.natDisconnect()
             except Exception:
                 _state.reset()
-            _state.skip_loader = True
 
     import natlink_compat as natlink
 
@@ -262,8 +254,7 @@ def _ensure_connected(request):
             def on_state_changed(self, state): pass
             def on_text(self, text, level=20): pass
         _state.ui_provider = _NullUI()
-    natlink.natConnect()
-    _state.stop_dragon_monitor()
+    natlink.natConnect(discovered_loaders=[])
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +300,12 @@ def _editwin_session():
     _editwin_proc = proc
     atexit.register(_kill_editwin)
     time.sleep(0.5)
-    focus_window(main_hwnd)
+    try:
+        focus_window(main_hwnd)
+    except RuntimeError:
+        # Another window owns the foreground right now.  Don't cascade
+        # every test into error — `_focus_editwin` retries per-test.
+        pass
     yield main_hwnd, edit_hwnd
     _kill_editwin()
     atexit.unregister(_kill_editwin)

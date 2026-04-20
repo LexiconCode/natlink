@@ -69,7 +69,17 @@ class TestGrammarMimicCallbacks:
         cls._gram.activate("listrule", 0)
         cls._gram.emptyList("files")
         cls._gram.appendList("files", "document")
+        # Exclusive: mimic must route to this grammar even when
+        # another window is foreground.
+        try:
+            cls._gram.setExclusive(True)
+        except Exception:
+            pass
         yield
+        try:
+            cls._gram.setExclusive(False)
+        except Exception:
+            pass
         cls._gram.unload()
 
     def test_mimic_with_callbacks(self):
