@@ -78,7 +78,7 @@ class TestLiveEditWindow:
             dobj.setLock(0)
             dobj.deactivate()
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictobj_change_callback_fires(self, live_connection):
         """DictObj change callback fires when mimic triggers dictation.
@@ -109,7 +109,7 @@ class TestLiveEditWindow:
             # Restore EDIT focus for subsequent tests
             _user32.PostMessageW(self._hwnd, WM_APP_FOCUS_EDIT, 1, 0)
             time.sleep(0.1)
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictobj_begin_callback_keeps_buffer_stable_until_return(self, live_connection):
         """DictObj begin callback runs before dictation mutates the buffer.
@@ -156,7 +156,7 @@ class TestLiveEditWindow:
         finally:
             _user32.PostMessageW(self._hwnd, WM_APP_FOCUS_EDIT, 1, 0)
             time.sleep(0.1)
-            dobj._destroy()
+            dobj.destroy()
 
     # -- Tests for typing into the Edit control via SendInput --
     # Dragon's PlayString uses WH_JOURNALPLAYBACK (blocked on Windows 11).
@@ -276,7 +276,7 @@ class TestLiveEditWindow:
             assert "brown" in selected.lower(), \
                 f"Expected 'brown' selected, got {selected!r} (sel={sel_start}:{sel_end}, text={text!r})"
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictate_over_selection(self, live_connection):
         """Dictating with a selection active should replace the selected text."""
@@ -306,7 +306,7 @@ class TestLiveEditWindow:
         finally:
             _user32.PostMessageW(self._hwnd, WM_APP_FOCUS_EDIT, 1, 0)
             time.sleep(0.1)
-            dobj._destroy()
+            dobj.destroy()
 
     # -- Select grammar: setSelectText / getSelectText --
     # Select grammars require a real window handle (global activation
@@ -456,7 +456,7 @@ class TestLiveEditWindow:
                     f"DictObj.setText does NOT sync to Edit control "
                     f"(edit={edit_text!r}, buffer={buf_text!r})")
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictobj_setTextSel_is_buffer_only(self, live_connection):
         """DictObj.setTextSel updates the internal buffer, NOT the Edit control.
@@ -489,7 +489,7 @@ class TestLiveEditWindow:
             assert edit_start == edit_end, \
                 f"Edit control should have no selection, got ({edit_start}, {edit_end})"
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictobj_mimic_then_programmatic_append(self, live_connection):
         """Mimic generates text, then DictObj appends to it programmatically."""
@@ -525,7 +525,7 @@ class TestLiveEditWindow:
         finally:
             _user32.PostMessageW(self._hwnd, WM_APP_FOCUS_EDIT, 1, 0)
             time.sleep(0.1)
-            dobj._destroy()
+            dobj.destroy()
 
     def test_dictobj_mimic_then_programmatic_replace(self, live_connection):
         """Mimic generates text, then DictObj replaces a word in it."""
@@ -563,6 +563,6 @@ class TestLiveEditWindow:
         finally:
             _user32.PostMessageW(self._hwnd, WM_APP_FOCUS_EDIT, 1, 0)
             time.sleep(0.1)
-            dobj._destroy()
+            dobj.destroy()
 
 

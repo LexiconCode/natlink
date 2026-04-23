@@ -186,7 +186,7 @@ class TestDictation:
             dobj.setLock(0)
             dobj.deactivate()
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
 
 # ── Vocabulary ──────────────────────────────────────────────────────────

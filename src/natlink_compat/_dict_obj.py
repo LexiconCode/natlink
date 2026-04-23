@@ -189,25 +189,28 @@ class DictObj:
         self._ensure_created()
         _com_call("DictObj.recentBufferCommit", self._com_dict.recent_buffer_commit)
 
-    def _destroy(self):
-        """Clean up the dictation object."""
+    def destroy(self):
+        """Clean up the dictation object.
+
+        Order matches C++ ``CDictationObject::destroy``: Release the COM
+        pointer first, null it out, then remove from the registry.
+        Raises on COM failure; ``__del__`` catches separately so
+        finalization never propagates out.
+        """
         if self._com_dict is not None:
             handle = self._com_dict.handle
             log.debug("Destroying dictation object (handle=%d)", handle)
+            conn = _state.backend.conn if _state.backend else None
+            _com_call("DictObj.destroy", self._com_dict.destroy, conn)
+            self._com_dict = None
             with _state.lock:
                 _state.dict_registry.pop(handle, None)
-            try:
-                conn = _state.backend.conn if _state.backend else None
-                _com_call("DictObj.destroy", self._com_dict.destroy, conn)
-            except Exception:
-                log.debug("Dictation destroy failed (handle=%d)", handle, exc_info=True)
-            self._com_dict = None
         self._begin_callback = None
         self._change_callback = None
 
     def __del__(self):
         if self._com_dict is not None:
             try:
-                self._destroy()
+                self.destroy()
             except Exception:
                 log.debug("Dictation cleanup in __del__ failed", exc_info=True)

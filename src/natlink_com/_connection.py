@@ -459,9 +459,9 @@ class DragonConnection:
                 log.debug("TrainingCancel failed during disconnect", exc_info=True)
             self._training_active = False
 
-        # Release all outstanding result objects before tearing down COM.
-        from ._res_obj import release_all_res_objs
-        release_all_res_objs()
+        # Result-object drain is done in natlink_compat._lifecycle._teardown_objects
+        # (matches C++ CDragonCode::releaseObjects grouping).  By the time we
+        # get here, natlink_com._res_obj._live_res_objs should already be empty.
 
         # Release comtypes wrappers and flush their Release calls via GC
         # BEFORE releasing raw pointers.  comtypes holds ~13 internal QI refs

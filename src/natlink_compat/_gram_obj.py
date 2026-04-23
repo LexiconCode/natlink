@@ -61,18 +61,22 @@ class GramObj:
             _state.grammar_registry[self._com_gram.handle] = self
 
     def unload(self) -> None:
-        """Unload/destroy the grammar."""
+        """Unload/destroy the grammar.
+
+        Order matches C++ ``CGrammarObject::unload``: Release the COM
+        pointer first, null it out, then remove from the registry.
+        Raises on COM failure so explicit callers (Dragonfly, user code)
+        see real errors; ``__del__`` catches separately so finalization
+        never propagates out.
+        """
         if self._com_gram is not None:
             handle = self._com_gram.handle
             log.debug("Unloading grammar (handle=%d)", handle)
+            conn = _state.backend.conn if _state.backend else None
+            _com_call("GramObj.unload", self._com_gram.unload, conn)
+            self._com_gram = None
             with _state.lock:
                 _state.grammar_registry.pop(handle, None)
-            try:
-                conn = _state.backend.conn if _state.backend else None
-                _com_call("GramObj.unload", self._com_gram.unload, conn)
-            except Exception:
-                log.debug("Grammar unload failed (handle=%d)", handle, exc_info=True)
-            self._com_gram = None
         self._begin_callback = None
         self._results_callback = None
         self._hypothesis_callback = None
