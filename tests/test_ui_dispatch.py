@@ -22,7 +22,8 @@ class TestBuildStateSnapshot(unittest.TestCase):
         from natlink_compat._ui_protocol import build_state_snapshot
         from natlink_compat._ui_protocol import PHASE_IDLE
 
-        state = build_state_snapshot()
+        with patch("natlink_compat._actions.get_loader_states", return_value=[]):
+            state = build_state_snapshot()
         self.assertFalse(state.connected)
         self.assertEqual(state.phase, PHASE_IDLE)
         self.assertEqual(state.mic_state, "")
