@@ -257,6 +257,30 @@ def _ensure_connected(request):
     natlink.natConnect(discovered_loaders=[])
 
 
+@pytest.fixture(autouse=True)
+def _detect_grammar_leaks(request):
+    """Fail a test that leaves grammars in the registry it didn't start with.
+
+    Pure diagnostic — does NOT drain. If a test leaks, the assertion names
+    the offender so we can fix it rather than masking the leak.
+    """
+    if "online" not in request.keywords:
+        yield
+        return
+    from natlink_compat._state import _state
+    pre_gram = set(_state.grammar_registry)
+    pre_dict = set(_state.dict_registry)
+    yield
+    post_gram = set(_state.grammar_registry)
+    post_dict = set(_state.dict_registry)
+    leaked_gram = post_gram - pre_gram
+    leaked_dict = post_dict - pre_dict
+    assert not leaked_gram, (
+        f"{request.node.nodeid} leaked grammar handles: {sorted(leaked_gram)}")
+    assert not leaked_dict, (
+        f"{request.node.nodeid} leaked dict handles: {sorted(leaked_dict)}")
+
+
 # ---------------------------------------------------------------------------
 # Session-scoped EDIT window — launched for ALL live tests so Dragon always
 # has a safe text target (prevents mimic/playString typing into the terminal)
