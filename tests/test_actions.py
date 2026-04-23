@@ -74,13 +74,15 @@ class TestLoaderActions(unittest.TestCase):
                        return_value=[("natlinkcore", "natlinkcore")]):
                 with patch("natlink_compat._loaders.get_disabled_loaders",
                            return_value=set()):
-                    result = _actions.get_loader_states()
-                    self.assertEqual(result, [("natlinkcore", True)])
+                    with patch("natlink_compat._loaders.get_loaders",
+                               return_value=[]):
+                        result = _actions.get_loader_states()
+                        self.assertEqual(result, [("natlinkcore", True, False)])
 
     def test_get_loader_states_returns_cached(self):
         from natlink_compat import _actions
 
-        cached = [("cached_loader", False)]
+        cached = [("cached_loader", False, False)]
         with _actions._loader_cache_lock:
             _actions._loader_states_cache = cached
 
@@ -94,7 +96,7 @@ class TestLoaderActions(unittest.TestCase):
         from natlink_compat import _actions
 
         with _actions._loader_cache_lock:
-            _actions._loader_states_cache = [("x", True)]
+            _actions._loader_states_cache = [("x", True, False)]
 
         _actions.invalidate_loader_cache()
 

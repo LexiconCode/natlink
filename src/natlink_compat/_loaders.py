@@ -75,10 +75,10 @@ def _display(text, level=20):
 
 
 def _on_loaders_changed():
-    """Recompute cached loader states and push to UI."""
+    """Invalidate loader cache and push to UI."""
     try:
-        from ._actions import _refresh_loader_states
-        _refresh_loader_states()
+        from ._actions import invalidate_loader_cache
+        invalidate_loader_cache()
         from ._ui_protocol import notify_ui
         notify_ui()
     except Exception:

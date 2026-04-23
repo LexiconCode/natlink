@@ -6,8 +6,28 @@ These are plain functions — UIs call them via ``import natlink_compat``.
 from __future__ import annotations
 
 import logging
+import threading
 
 log = logging.getLogger("natlink.compat")
+
+_loader_states_cache = None
+_loader_cache_lock = threading.Lock()
+
+
+def _dispatch_or_run(fn, *args) -> None:
+    """Queue on the STA thread when possible, else run inline.
+
+    The inline path exists for environments with no hidden window (unit
+    tests, CLI invocations before connect). Production calls from a
+    background thread always hit the `dispatch` path.
+    """
+    try:
+        from natlink_com._hidden_wnd import dispatch
+    except ImportError:
+        dispatch = None
+    if dispatch is not None and dispatch(fn, *args):
+        return
+    fn(*args)
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +91,7 @@ def reload_grammars() -> None:
 
     Deferred to the main (STA) thread — grammar unload/load are COM calls.
     """
-    from natlink_com._hidden_wnd import dispatch
-    dispatch(_reload_grammars_impl)
+    _dispatch_or_run(_reload_grammars_impl)
 
 
 def _reload_grammars_impl() -> None:
@@ -92,19 +111,20 @@ def toggle_loader(name: str) -> None:
     main (STA) thread because COM calls must not cross thread boundaries.
     """
     from ._loaders import get_disabled_loaders as _get_disabled_loaders
-    from natlink_com._hidden_wnd import dispatch
     is_disabled = name in _get_disabled_loaders()
     if is_disabled:
         from natlink_com._config import enable_loader
         enable_loader(name)
-        dispatch(_start_loader_by_name, name)
+        _dispatch_or_run(_start_loader_by_name, name)
     else:
         from natlink_com._config import disable_loader
         disable_loader(name)
-        dispatch(_stop_loader_by_name, name)
-    # Refresh cached state so the UI sees the INI change immediately.
-    # The deferred COM work will refresh again when it completes.
-    _refresh_loader_states()
+        _dispatch_or_run(_stop_loader_by_name, name)
+    # Invalidate the cache so the UI sees the INI change immediately.
+    # The deferred COM work will invalidate again when it completes.
+    invalidate_loader_cache()
+    from ._ui_protocol import notify_ui
+    notify_ui()
 
 
 def _start_loader_by_name(name):
@@ -129,35 +149,35 @@ def _stop_loader_by_name(name):
 
 
 def get_loader_states():
-    """Return (name, enabled, running) tuples for all discovered loaders.
+    """Return cached `(name, enabled, running)` loader tuples.
 
-    Reads from the cached snapshot in _state. If empty (pre-connect),
-    computes fresh.
+    Sole source of loader state for UI menus and state snapshots.
+    Invalidate via `invalidate_loader_cache()` when INI or runtime
+    state changes.
     """
-    from ._state import _state
-    cached = _state.last_loader_states
-    if cached:
-        return cached
-    return _compute_loader_states()
+    global _loader_states_cache
+    with _loader_cache_lock:
+        if _loader_states_cache is not None:
+            return _loader_states_cache
+        try:
+            from ._loaders import (get_all_loader_names, get_disabled_loaders,
+                                   get_loaders, _loader_base_name)
+            disabled = get_disabled_loaders()
+            running = {_loader_base_name(l) for l in get_loaders()}
+            _loader_states_cache = [
+                (name, name not in disabled, name in running)
+                for name, _ in get_all_loader_names()
+            ]
+        except ImportError:
+            _loader_states_cache = []
+        return _loader_states_cache
 
 
-def _compute_loader_states():
-    """Build loader states from INI + runtime."""
-    try:
-        from ._loaders import (get_all_loader_names, get_disabled_loaders,
-                               get_loaders, _loader_base_name)
-        disabled = get_disabled_loaders()
-        running_names = {_loader_base_name(l) for l in get_loaders()}
-        return [(name, name not in disabled, name in running_names)
-                for name, _ in get_all_loader_names()]
-    except Exception:
-        return []
-
-
-def _refresh_loader_states():
-    """Recompute and cache loader states."""
-    from ._state import _state
-    _state.last_loader_states = tuple(_compute_loader_states())
+def invalidate_loader_cache() -> None:
+    """Clear the loader-state cache so the next `get_loader_states` recomputes."""
+    global _loader_states_cache
+    with _loader_cache_lock:
+        _loader_states_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -188,8 +208,7 @@ def set_mic(state: str) -> None:
     Args:
         state: One of ``'on'``, ``'off'``, or ``'sleeping'``.
     """
-    from natlink_com._hidden_wnd import dispatch
-    dispatch(_set_mic_impl, state)
+    _dispatch_or_run(_set_mic_impl, state)
 
 
 def _set_mic_impl(state: str) -> None:

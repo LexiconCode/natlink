@@ -37,7 +37,6 @@ class _NatlinkState:
         self.last_mic_state: str = ""
         self.last_user_name: str = ""
         self.last_user_dir: str = ""
-        self.last_loader_states: tuple = ()  # (name, enabled, running) tuples
 
         # Global callback stacks — multiple loaders can each register one.
         self.begin_callbacks: List[Callable] = []
@@ -109,7 +108,8 @@ class _NatlinkState:
         self.last_mic_state = ""
         self.last_user_name = ""
         self.last_user_dir = ""
-        self.last_loader_states = ()
+        from ._actions import invalidate_loader_cache
+        invalidate_loader_cache()
         if self._conn_mutex:
             import ctypes
             ctypes.windll.kernel32.CloseHandle(self._conn_mutex)

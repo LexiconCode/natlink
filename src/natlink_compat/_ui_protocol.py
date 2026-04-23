@@ -107,6 +107,7 @@ def build_state_snapshot() -> NatlinkState:
     deferred callback processing.
     """
     from ._state import _state
+    from ._actions import get_loader_states
     with _state.lock:
         phase = _state.phase
         error_msg = _state.error_message
@@ -115,7 +116,7 @@ def build_state_snapshot() -> NatlinkState:
         mic = _state.last_mic_state
         user = _state.last_user_name
         user_dir = _state.last_user_dir
-        loader_states = _state.last_loader_states
+    loader_states = tuple(get_loader_states())
 
     version = (0, 0, 0)
     if backend is not None:
