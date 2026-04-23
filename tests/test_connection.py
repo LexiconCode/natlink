@@ -10,12 +10,17 @@ from natlink_compat._exceptions import WrongState
 class TestState:
 
     def test_reset_clears_everything(self):
+        class _Sentinel:
+            pass
+
+        fake_grammar = _Sentinel()
+        fake_dict = _Sentinel()
         _state.backend = object()  # fake backend — makes connected=True
         _state.callback_depth = 5
         _state.begin_callbacks.append(lambda: None)
         _state.change_callbacks.append(lambda: None)
-        _state.grammar_registry[1] = "fake"
-        _state.dict_registry[2] = "fake"
+        _state.grammar_registry[1] = fake_grammar
+        _state.dict_registry[2] = fake_dict
 
         _state.reset()
 

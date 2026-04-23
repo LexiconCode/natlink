@@ -1,5 +1,8 @@
 """GramObj lifecycle tests (offline + live)."""
 
+import gc
+from unittest.mock import MagicMock
+
 import pytest
 
 import natlink_compat as natlink
@@ -47,6 +50,21 @@ class TestGramObjOffline:
     def test_unload_without_load_is_noop(self):
         gram = natlink.GramObj()
         gram.unload()  # should not raise
+
+    def test_drop_last_ref_unloads_and_unregisters(self):
+        _state.backend = type("_Backend", (), {"conn": None})()
+
+        gram = natlink.GramObj()
+        mock_com_gram = MagicMock()
+        mock_com_gram.handle = 42
+        gram._com_gram = mock_com_gram
+        _state.grammar_registry[42] = gram
+
+        del gram
+        gc.collect()
+
+        assert 42 not in _state.grammar_registry
+        mock_com_gram.unload.assert_called_once_with(None)
 
     def test_callback_setters_work_without_load(self):
         gram = natlink.GramObj()
@@ -104,6 +122,30 @@ class TestLiveGrammar:
         gram.unload()
         assert handle not in _state.grammar_registry
 
+    def test_grammar_released_when_user_drops_refs(self, live_connection):
+        """Dropping the last GramObj ref unregisters it from the registry.
+
+        Matches the C++ contract: `gramobj_dealloc` → `destroy()` →
+        `unload()` → `removeGramObj(this)`.  Registry membership is the
+        observable cleanup signal.  We don't assert on Dragon-side
+        recognition because Dragon's own grammars (e.g. dictation for a
+        focused edit control) can recognize arbitrary English words
+        after ours unloads, so mimic outcome is not a reliable probe.
+        """
+        binary = compile_grammar("<rule> exported = test drop refs;")
+
+        gram = natlink.GramObj()
+        gram.load(binary)
+        gram.activate("rule", 0)
+        handle = gram._com_gram.handle
+
+        assert handle in _state.grammar_registry
+
+        del gram
+        gc.collect()
+
+        assert handle not in _state.grammar_registry
+
     def test_load_with_allResults(self, live_connection):
         binary = compile_grammar("<rule> exported = test;")
         gram = natlink.GramObj()
@@ -128,11 +170,13 @@ class TestLiveGrammar:
         gram = natlink.GramObj()
         try:
             gram.load(binary1)
-            handle1 = gram._com_gram.handle
+            first_com = gram._com_gram
             gram.load(binary2)
-            handle2 = gram._com_gram.handle
-            assert handle1 not in _state.grammar_registry
-            assert handle2 in _state.grammar_registry
+            second_com = gram._com_gram
+            # A new ComGramObj is created for each load.  Handle values
+            # (raw pointer addresses) may recycle, so compare wrappers.
+            assert second_com is not first_com
+            assert _state.grammar_registry[second_com.handle] is gram
         finally:
             gram.unload()
 

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Callable, List, Optional, TYPE_CHECKING
+from weakref import WeakValueDictionary
 
 if TYPE_CHECKING:
     from natlink_com import NatlinkCOM
@@ -42,9 +43,12 @@ class _NatlinkState:
         self.begin_callbacks: List[Callable] = []
         self.change_callbacks: List[Callable] = []
         self.timer_callbacks: List[Callable] = []
-        # Handle -> wrapper registries (populated by GramObj.load / DictObj)
-        self.grammar_registry: Dict[int, object] = {}  # handle -> GramObj
-        self.dict_registry: Dict[int, object] = {}     # handle -> DictObj
+        # Handle -> wrapper registries (populated by GramObj.load / DictObj).
+        # These must not own object lifetime: the original C++ kept raw
+        # pointers in linked lists, while Python refcount/dealloc triggered
+        # GramObj/DictObj cleanup.
+        self.grammar_registry: WeakValueDictionary[int, object] = WeakValueDictionary()
+        self.dict_registry: WeakValueDictionary[int, object] = WeakValueDictionary()
 
         # Callback depth tracking (for getCallbackDepth() API)
         self.callback_depth = 0

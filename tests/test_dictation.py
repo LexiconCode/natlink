@@ -60,7 +60,7 @@ class TestLiveDictation:
             dobj.setLock(0)
             dobj.deactivate()
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_setText_replace_range(self, live_connection):
         """setText(text, start, end) replaces the [start, end) range."""
@@ -72,7 +72,7 @@ class TestLiveDictation:
             assert dobj.getText(0, 0x7FFFFFFF) == "the slow brown fox"
             dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_getText_subrange(self, live_connection):
         """getText(start, end) reads a subrange of the buffer."""
@@ -84,7 +84,7 @@ class TestLiveDictation:
             assert dobj.getText(10, 19) == "brown fox"
             dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_setTextSel_and_getTextSel(self, live_connection):
         dobj = natlink.DictObj()
@@ -97,7 +97,7 @@ class TestLiveDictation:
             assert end == 6
             dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_callbacks(self, live_connection):
         dobj = natlink.DictObj()
@@ -111,7 +111,7 @@ class TestLiveDictation:
             dobj.activate(0)
             dobj.deactivate()
         finally:
-            dobj._destroy()
+            dobj.destroy()
         assert dobj._begin_callback is None
         assert dobj._change_callback is None
 
@@ -131,8 +131,8 @@ class TestLiveDictation:
             d1.setLock(0)
             d2.setLock(0)
         finally:
-            d1._destroy()
-            d2._destroy()
+            d1.destroy()
+            d2.destroy()
 
     def test_auto_lock(self, live_connection):
         """Methods auto-lock if user hasn't called setLock(1)."""
@@ -142,7 +142,7 @@ class TestLiveDictation:
             assert dobj.getText(0, 0x7FFFFFFF) == "auto lock test"
             assert dobj.getLength() == 14
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_negative_indices(self, live_connection):
         """Negative indices offset from the end."""
@@ -154,7 +154,7 @@ class TestLiveDictation:
             assert dobj.getText(-5, 0x7FFFFFFF) == "world"
             dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_autolock_set_get(self, live_connection):
         """setAutoLock / getAutoLock round-trip."""
@@ -165,7 +165,7 @@ class TestLiveDictation:
             dobj.setAutoLock(0)
             assert dobj.getAutoLock() is False
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_visible_text_set_get(self, live_connection):
         """setVisibleText / getVisibleText round-trip."""
@@ -179,7 +179,7 @@ class TestLiveDictation:
             assert end == 19
             dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_hint_text(self, live_connection):
         """hintText call completes (may return E_INVALIDARG on DNS 13)."""
@@ -194,7 +194,7 @@ class TestLiveDictation:
                 pass
             dobj.deactivate()
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_get_that(self, live_connection):
         """getThat returns a (start, end) tuple."""
@@ -207,7 +207,7 @@ class TestLiveDictation:
             assert isinstance(result, tuple)
             assert len(result) == 2
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_recent_buffer_commit(self, live_connection):
         """recentBufferCommit completes without error."""
@@ -215,7 +215,7 @@ class TestLiveDictation:
         try:
             dobj.recentBufferCommit()  # should not raise
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_bookmark_lifecycle(self, live_connection):
         """addBookmark / queryBookmark / moveBookmark / removeBookmark.
@@ -242,7 +242,7 @@ class TestLiveDictation:
             finally:
                 dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()
 
     def test_enum_bookmarks(self, live_connection):
         """enumBookmarks returns a list of (id, position) tuples."""
@@ -266,4 +266,4 @@ class TestLiveDictation:
             finally:
                 dobj.setLock(0)
         finally:
-            dobj._destroy()
+            dobj.destroy()

@@ -39,10 +39,35 @@ log = logging.getLogger("natlink.compat")
 
 
 def _teardown_objects():
-    """Unload all grammars and destroy all dictation objects."""
+    """Drain grammars, results, and dictation objects.
+
+    Matches C++ ``CDragonCode::releaseObjects``: grammars → results →
+    dicts, all in one function at the same layer.
+    """
     for label, registry, method in [
         ("grammars", _state.grammar_registry, "unload"),
-        ("dictation objects", _state.dict_registry, "_destroy"),
+    ]:
+        with _state.lock:
+            objects = list(registry.values())
+        if objects:
+            log.debug("natDisconnect: tearing down %d %s", len(objects), label)
+        for obj in objects:
+            try:
+                getattr(obj, method)()
+            except Exception:
+                log.debug("%s teardown failed", label, exc_info=True)
+
+    # Results drain (keyed in natlink_com._res_obj — no wrapper-level registry
+    # because ResObj wrappers are ephemeral callback arguments, not
+    # user-constructed).
+    try:
+        from natlink_com._res_obj import release_all_res_objs
+        release_all_res_objs()
+    except Exception:
+        log.debug("result objects teardown failed", exc_info=True)
+
+    for label, registry, method in [
+        ("dictation objects", _state.dict_registry, "destroy"),
     ]:
         with _state.lock:
             objects = list(registry.values())
