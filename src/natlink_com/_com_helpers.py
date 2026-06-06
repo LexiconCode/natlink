@@ -83,6 +83,10 @@ def force_release(ptr):
     for the actual COM Release — which may never happen if comtypes has
     already internally released the proxy (leaving Dragon's CNotify list
     with dangling entries).
+
+    STA-only: the read-then-zero of the proxy pointer is not atomic, so this
+    must run on the apartment thread that owns the proxy.  A stray cross-thread
+    call racing the same proxy would double-free.
     """
     if ptr is None:
         return

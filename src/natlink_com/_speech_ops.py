@@ -340,6 +340,7 @@ def input_from_file(conn, path, flags=0, playlist=b""):
                               error_message="No audio file source interface")
 
     _input_from_file_active = True
+    started = False
     try:
         afs.FileNameSet(flags, path)
 
@@ -350,12 +351,20 @@ def input_from_file(conn, path, flags=0, playlist=b""):
 
         _kernel32.ResetEvent(conn.playback_done)
         afs.EnableSet(True)
+        started = True
         if not pump(conn.playback_done, 300000, "inputFromFile"):  # 5min
             raise NatlinkCOMError("inputFromFile",
                                   error_message="inputFromFile timed out (5min)")
 
-        afs.EnableSet(False)
-        afs.FileClose()
         log.debug("inputFromFile completed: %s", path)
     finally:
+        # Always disable/close the file source once EnableSet(True) succeeded,
+        # so a pump timeout/error does not leave Dragon's file-audio source
+        # active.
+        if started:
+            try:
+                afs.EnableSet(False)
+                afs.FileClose()
+            except Exception:
+                log.exception("inputFromFile cleanup failed")
         _input_from_file_active = False

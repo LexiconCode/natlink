@@ -7,6 +7,7 @@ Implements two COM interfaces on a single object:
 Created per-grammar and passed to ISRCentralW::GrammarLoad.
 """
 
+import ctypes
 import logging
 
 log = logging.getLogger("natlink.com.sink.grammar")
@@ -92,15 +93,20 @@ def _build_sink_class():
                     tlb = get_tlb()
                 words = parse_srphrasew(pSRPhrase)
                 log.debug("PhraseFinish words: %s", words)
-                # AddRef pUnknown so it survives after this RPC returns.
-                if pUnknown is not None:
-                    pUnknown.AddRef()
+                # Wrap the raw pointer in an independent comtypes wrapper that
+                # ComResObj solely owns and releases — the comtypes pUnknown
+                # passed into this callback is released by the RPC dispatcher
+                # when we return, so its reference cannot survive the call.
+                import comtypes
+                from ._com_helpers import wrap_comtypes
+                raw = ctypes.cast(pUnknown, ctypes.c_void_p).value
+                owned = wrap_comtypes(raw, comtypes.IUnknown)
                 try:
-                    res_obj = ComResObj(pUnknown, words=words, tlb=tlb,
+                    res_obj = ComResObj(owned, words=words, tlb=tlb,
                                         connection=conn)
                 except Exception:
-                    if pUnknown is not None:
-                        pUnknown.Release()
+                    from ._com_helpers import force_release
+                    force_release(owned)
                     raise
                 # "setting this will delay recognition at the start of the
                 # next utterance until results are processed"

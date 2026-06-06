@@ -11,5 +11,6 @@ from ._res_obj import ComResObj
 from ._dict_obj import ComDictObj
 from ._ini_file import IniFile
 from ._config import print_config
-from ._win32 import msgbox, MB_ICONERROR, MB_ICONWARNING
+from ._win32 import (msgbox, MB_ICONERROR, MB_ICONWARNING, MB_ICONQUESTION,
+                     MB_YESNO, IDYES, IDNO)
 from ._launcher import request_shutdown, signal_restart

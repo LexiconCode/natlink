@@ -16,6 +16,8 @@ kernel32.LoadLibraryW.argtypes = [ctypes.c_wchar_p]
 kernel32.LoadLibraryW.restype = c_void_p
 kernel32.GetProcAddress.argtypes = [c_void_p, ctypes.c_char_p]
 kernel32.GetProcAddress.restype = c_void_p
+kernel32.FreeLibrary.argtypes = [c_void_p]
+kernel32.FreeLibrary.restype = ctypes.c_int
 
 ole32 = ctypes.windll.ole32
 ole32.CoRegisterClassObject.argtypes = [POINTER(GUID), c_void_p, c_ulong, c_ulong, POINTER(c_ulong)]

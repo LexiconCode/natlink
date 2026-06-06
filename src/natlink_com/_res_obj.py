@@ -58,7 +58,12 @@ class ComResObj:
         self._words = words or []
         self._tlb = tlb
         self._connection = connection
-        # QI ISRResBasicW immediately, drop IUnknown (matches C++ pattern).
+        # Own the IUnknown for the lifetime of this object — callers hand us a
+        # reference they no longer manage (an AddRef'd RPC pointer in the
+        # PhraseFinish sink, or a freshly wrapped raw pointer in ResultsGet).
+        # Released in release() so the Dragon refcount drains on teardown.
+        self._unknown = results_unknown
+        # QI ISRResBasicW immediately (matches C++ pattern).
         self._res_basic = None
         if results_unknown is not None and tlb is not None:
             try:
@@ -300,12 +305,15 @@ class ComResObj:
         return (start, end)
 
     def release(self):
-        """Release ISRResBasicW — matching C++ CResultObject::destroy."""
+        """Release ISRResBasicW and the owned IUnknown — matching C++
+        CResultObject::destroy plus the IUnknown reference this object owns."""
         from ._com_helpers import force_release
         try:
             force_release(self._res_basic)
+            force_release(self._unknown)
         finally:
             self._res_basic = None
+            self._unknown = None
             self._connection = None
 
     def _qi(self, iface_name):

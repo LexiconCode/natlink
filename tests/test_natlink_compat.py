@@ -312,6 +312,7 @@ class TestExports(unittest.TestCase):
             "getWordInfo", "addWord", "deleteWord", "setWordInfo",
             "getWordProns", "enumerateWords", "enumeratePrefixWords",
             "getWordFromPrefix", "getWordFromPron",
+            "set_inactive",
         ]
         for name in expected_funcs:
             with self.subTest(name=name):
@@ -341,6 +342,41 @@ class TestExports(unittest.TestCase):
                 cls = getattr(natlink_compat, name)
                 self.assertTrue(issubclass(cls, Exception),
                                 f"Not an exception: {name}")
+
+
+class TestLauncherActiveGating(unittest.TestCase):
+    """natConnect/natDisconnect re-entry guards when the launcher owns the
+    connection (issue #228)."""
+
+    def test_natDisconnect_noop_when_launcher_active(self):
+        from natlink_compat import _lifecycle
+        fake = MagicMock(launcher_active=True)
+        with patch.object(_lifecycle, "_state", fake), \
+             patch.object(_lifecycle, "_disconnect") as mock_disc:
+            _lifecycle.natDisconnect()
+        mock_disc.assert_not_called()
+
+    def test_natDisconnect_tears_down_when_standalone(self):
+        from natlink_compat import _lifecycle
+        fake = MagicMock(launcher_active=False)
+        with patch.object(_lifecycle, "_state", fake), \
+             patch.object(_lifecycle, "_disconnect") as mock_disc:
+            _lifecycle.natDisconnect()
+        mock_disc.assert_called_once()
+
+    def test_natConnect_returns_noop_handle_when_launcher_already_connected(self):
+        from natlink_compat import _lifecycle
+        fake = MagicMock(launcher_active=True, connected=True)
+        with patch.object(_lifecycle, "_state", fake), \
+             patch.object(_lifecycle, "_establish_com_connection") as mock_est, \
+             patch.object(_lifecycle, "_disconnect") as mock_disc:
+            cm = _lifecycle.natConnect(discovered_loaders=[])
+            with cm:
+                pass
+        # Did not rebuild the shared connection, and exiting the handle did
+        # not tear it down.
+        mock_est.assert_not_called()
+        mock_disc.assert_not_called()
 
 
 class TestUIProviderContract(unittest.TestCase):

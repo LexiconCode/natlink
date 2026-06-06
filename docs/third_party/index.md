@@ -151,6 +151,26 @@ def stop():
 
 or an object implementing `start()` and `stop()`.
 
+### Registration
+
+Natlink itself ships no built-in loader. Loaders live in separate
+distributions (for example `natlinkcore`) and self-register through the
+`natlink.loaders` entry point group. Declare yours in `pyproject.toml`:
+
+```toml
+[project.entry-points."natlink.loaders"]
+my-loader = "my_package.loader"
+```
+
+The entry-point value is the importable module path; natlink imports it,
+calls the optional module-level `setup()`, then `start()` after the COM
+connection succeeds. The entry-point name is also the key used in the
+`[loaders]` section of `natlink.ini` to enable or disable a loader.
+
+For backwards compatibility, if no `natlinkcore` entry point is registered
+natlink falls back to importing `natlinkcore.loader` when that module is
+installed.
+
 Lifecycle:
 
 1. discovery/import

@@ -22,10 +22,15 @@ from ._helpers import _require_not_during_init, _require_not_paused
 
 
 def _atexit_disconnect():
-    """Emergency cleanup on process exit — unregister sinks + Resume."""
+    """Emergency cleanup on process exit — unregister sinks + Resume.
+
+    Calls the real teardown directly (not the launcher-gated public
+    natDisconnect) so the connection is released even when the launcher
+    owns it.
+    """
     if _state.connected:
         try:
-            natDisconnect()
+            _disconnect()
         except Exception:
             pass
 
@@ -109,6 +114,14 @@ def _connect_cm():
         natDisconnect()
 
 
+@contextlib.contextmanager
+def _noop_cm():
+    """Handle returned to a re-entrant ``natConnect()`` when the launcher
+    already owns the connection (issue #228). Exiting it does NOT disconnect —
+    the launcher controls the shared connection's lifetime."""
+    yield
+
+
 def _establish_com_connection():
     """Phase A of natConnect: pure COM — mutex, backend, sinks, callbacks.
 
@@ -121,12 +134,21 @@ def _establish_com_connection():
     import ctypes
     from ._win32 import kernel32
 
-    # Single-instance check: warn (don't block) if another natlink is connected.
+    # Single active connection — hard limit (issue #228). Natlink serializes
+    # all Dragon COM on one STA main thread, so two owners would race events
+    # and freeze Dragon. If the NatlinkConnectionActive mutex already exists,
+    # another process (a second natlink, a standalone loader, or the test
+    # suite) owns the connection; refuse rather than corrupt event ordering.
+    # The owner releases it via natDisconnect (tray menu > Inactive).
     _state._conn_mutex = kernel32.CreateMutexW(None, True, "NatlinkConnectionActive")
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-        log.warning(
-            "Another natlink process is already connected to Dragon. "
-            "Cross-process grammar routing may cause unexpected behavior.")
+        kernel32.CloseHandle(_state._conn_mutex)
+        _state._conn_mutex = None
+        from ._exceptions import ConnectionInUse
+        raise ConnectionInUse(
+            "Another process is already connected to Dragon. Release that "
+            "connection (natlink tray menu > Inactive, or call natDisconnect) "
+            "before connecting.")
 
     _state.during_init = True
     try:
@@ -236,8 +258,19 @@ def natConnect(bUseThreads: bool = False, *, discovered_loaders=None):
             When None, natConnect discovers itself.
     """
     if _state.connected:
+        if _state.launcher_active:
+            # Launcher owns the process + the single shared connection
+            # (issue #228). A loader/framework calling natConnect() must not
+            # tear down and rebuild it — that would drop every other loader's
+            # grammars and callbacks. Hand back a no-op handle; the real
+            # connection lives until launcher teardown or tray > Inactive.
+            log.debug("natConnect: launcher already connected — returning "
+                      "no-op handle")
+            return _noop_cm()
+        # Standalone caller reconnecting (no launcher): tear down then
+        # rebuild, as legacy natlink did.
         log.debug("natConnect: already connected, disconnecting first")
-        natDisconnect()
+        _disconnect()
 
     from natlink_com._win32 import kernel32 as _k32
     _k32.ResetEvent(_state._disconnect_event_handle)
@@ -259,10 +292,30 @@ def natConnect(bUseThreads: bool = False, *, discovered_loaders=None):
 
 
 def natDisconnect() -> None:
-    """Disconnect from Dragon by releasing all internal COM interface pointers.
+    """Disconnect from Dragon.
 
-    This will cause Dragon to stop running if it was launched by natConnect.
-    All grammars, result objects, and dictation objects are invalidated.
+    When the launcher owns the process (issue #228), a loader's
+    ``natDisconnect()`` is a no-op: the launcher controls the single shared
+    connection's lifetime, so one loader must not tear it down for the others.
+    Real teardown then happens only at launcher shutdown, on restart, or when
+    the user releases Dragon via the tray "Inactive" item. In a standalone
+    process (no launcher), ``natDisconnect()`` tears the connection down as in
+    legacy natlink.
+    """
+    if _state.launcher_active:
+        log.debug("natDisconnect: ignored — launcher owns the connection "
+                  "(release Dragon via the tray 'Inactive' item)")
+        return
+    _disconnect()
+
+
+def _disconnect() -> None:
+    """Release all internal COM interface pointers and runtime objects.
+
+    The real teardown. Invoked by the launcher (shutdown / restart / inactive)
+    and by standalone ``natDisconnect()``. Causes Dragon to stop running if it
+    was launched by natConnect; all grammars, result objects, and dictation
+    objects are invalidated.
     """
     from ._ui_protocol import PHASE_IDLE, set_phase
 

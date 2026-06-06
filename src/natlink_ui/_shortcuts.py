@@ -136,11 +136,14 @@ def install_startup():
 
 def uninstall_startup():
     path = _startup_path()
-    if path.is_file():
-        path.unlink()
-        print(f"Removed: {path}")
-        return True
-    return False
+    try:
+        existed = path.is_file()
+        path.unlink(missing_ok=True)
+        if existed:
+            print(f"Removed: {path}")
+        return existed
+    except OSError:
+        return False
 
 
 def create_desktop_shortcut():

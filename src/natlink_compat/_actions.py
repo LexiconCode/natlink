@@ -6,12 +6,8 @@ These are plain functions — UIs call them via ``import natlink_compat``.
 from __future__ import annotations
 
 import logging
-import threading
 
 log = logging.getLogger("natlink.compat")
-
-_loader_states_cache = None
-_loader_cache_lock = threading.Lock()
 
 
 def _dispatch_or_run(fn, *args) -> None:
@@ -153,31 +149,31 @@ def get_loader_states():
 
     Sole source of loader state for UI menus and state snapshots.
     Invalidate via `invalidate_loader_cache()` when INI or runtime
-    state changes.
+    state changes. The cache lives on ``_state`` (see _state.py).
     """
-    global _loader_states_cache
-    with _loader_cache_lock:
-        if _loader_states_cache is not None:
-            return _loader_states_cache
+    from ._state import _state
+    with _state.loader_cache_lock:
+        if _state.loader_states_cache is not None:
+            return _state.loader_states_cache
         try:
             from ._loaders import (get_all_loader_names, get_disabled_loaders,
                                    get_loaders, _loader_base_name)
             disabled = get_disabled_loaders()
             running = {_loader_base_name(l) for l in get_loaders()}
-            _loader_states_cache = [
+            _state.loader_states_cache = [
                 (name, name not in disabled, name in running)
                 for name, _ in get_all_loader_names()
             ]
         except ImportError:
-            _loader_states_cache = []
-        return _loader_states_cache
+            _state.loader_states_cache = []
+        return _state.loader_states_cache
 
 
 def invalidate_loader_cache() -> None:
     """Clear the loader-state cache so the next `get_loader_states` recomputes."""
-    global _loader_states_cache
-    with _loader_cache_lock:
-        _loader_states_cache = None
+    from ._state import _state
+    with _state.loader_cache_lock:
+        _state.loader_states_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +217,21 @@ def exit_natlink() -> None:
     """Shut down natlink cleanly."""
     from natlink_com._launcher import request_shutdown
     request_shutdown()
+
+
+def set_inactive(inactive: bool) -> bool:
+    """Release or reclaim natlink's single Dragon connection (issue #228).
+
+    When ``inactive`` is True natlink releases Dragon — every grammar,
+    callback, and timer plus the ``NatlinkConnectionActive`` mutex — so
+    another process (a standalone loader or test suite) can take ownership.
+    When False natlink reconnects. The work runs on the launcher's main
+    thread (it owns the COM objects); this only signals the request.
+
+    Returns False if no launcher is running to service the request.
+    """
+    from natlink_com._launcher import signal_deactivate, signal_activate
+    return signal_deactivate() if inactive else signal_activate()
 
 
 # ---------------------------------------------------------------------------

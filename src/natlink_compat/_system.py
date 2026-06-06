@@ -147,7 +147,7 @@ def _testFileName(fileName):
     a legal extension (.utd, .utt, .utb, .wav, .nwv).
     """
     import os
-    from ._exceptions import NatError
+    from ._exceptions import NatError, ValueError
     if not fileName:
         raise ValueError("inputFromFile: empty filename")
     if not os.path.isfile(fileName):

@@ -30,6 +30,17 @@ class WrongState(NatError):
     pass
 
 
+class ConnectionInUse(NatError):
+    """Another process already holds the single Dragon connection.
+
+    Natlink permits one active connection at a time, guarded by the
+    ``NatlinkConnectionActive`` named mutex. The current owner must release
+    it (natlink tray menu > Inactive, or ``natDisconnect()``) before another
+    process can connect. See issue #228.
+    """
+    pass
+
+
 class BadWindow(NatError):
     pass
 

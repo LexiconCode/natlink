@@ -254,8 +254,42 @@ def signal_restart():
 _MUTEX_NAME = "NatlinkLauncherMutex"
 _SHUTDOWN_EVENT_NAME = "NatlinkShutdown"
 _RESTART_EVENT_NAME = "NatlinkRestartDragon"
+_DEACTIVATE_EVENT_NAME = "NatlinkDeactivate"  # issue #228: release Dragon
+_ACTIVATE_EVENT_NAME = "NatlinkActivate"      # issue #228: reconnect Dragon
 _EVENT_MODIFY_STATE = 0x0002
 _instance_mutex = None  # prevent GC of mutex handle
+
+
+def _signal_named_event(name):
+    """Open a named auto-reset event and set it. Returns False if absent."""
+    h = kernel32.OpenEventW(_EVENT_MODIFY_STATE, False, name)
+    if not h:
+        return False
+    kernel32.SetEvent(h)
+    kernel32.CloseHandle(h)
+    return True
+
+
+def signal_deactivate():
+    """Signal the launcher's main loop to release Dragon (issue #228).
+
+    Called from the tray menu's worker thread; the disconnect runs on the
+    main thread which owns the COM objects.
+    """
+    if _signal_named_event(_DEACTIVATE_EVENT_NAME):
+        log.info("Deactivate event signaled")
+        return True
+    log.warning("Could not open deactivate event — launcher not running?")
+    return False
+
+
+def signal_activate():
+    """Signal the launcher's main loop to reconnect to Dragon (issue #228)."""
+    if _signal_named_event(_ACTIVATE_EVENT_NAME):
+        log.info("Activate event signaled")
+        return True
+    log.warning("Could not open activate event — launcher not running?")
+    return False
 
 
 def request_shutdown(timeout_ms=5000):

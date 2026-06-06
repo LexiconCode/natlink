@@ -361,6 +361,8 @@ def reload_loader(loaders=None):
             continue
 
         # Slow path: full stop/reimport/restart
+        from ._callbacks import _remove_callbacks_for
+        _remove_callbacks_for(target)
         if _find_entry(target) is not None:
             stop_loader(target)
             _unregister(target)

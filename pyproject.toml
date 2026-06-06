@@ -68,7 +68,7 @@ where = ["src"]
 include = ["natlink*", "natlink_com*", "natlink_compat*", "natlink_ui*"]
 
 [tool.pytest.ini_options]
-minversion = "7.1.2"
+minversion = "9.0.2"
 addopts = "--capture=tee-sys --cov --cov-report=term-missing:skip-covered"
 markers = [
     "online: tests that require a live Dragon connection (auto-skipped otherwise)",

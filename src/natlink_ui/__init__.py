@@ -21,7 +21,8 @@ import natlink_compat
 from natlink_compat import (
     NatlinkState,
     PHASE_IDLE, PHASE_WAITING_FOR_DRAGON, PHASE_CONNECTING,
-    PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING, PHASE_ERROR,
+    PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING,
+    PHASE_INACTIVE, PHASE_ERROR,
 )
 
 log = logging.getLogger("natlink.ui")
@@ -38,6 +39,7 @@ _TOOLTIPS = {
     PHASE_LOADING_PROFILE: "Natlink - Loading profile...",
     PHASE_CONNECTED: "Natlink - Connected",
     PHASE_RESTARTING: "Natlink - Restarting Dragon...",
+    PHASE_INACTIVE: "Natlink - Inactive (Dragon released)",
     PHASE_ERROR: "Natlink - {error}",
 }
 
@@ -56,6 +58,7 @@ class UIProvider:
         from ._window import NatlinkWindow
 
         self._lock = threading.Lock()
+        self._latest_phase = PHASE_IDLE
         self._window = NatlinkWindow(
             load_config=load_ui_config, save_config=save_ui_config)
         self._build_menu()
@@ -67,6 +70,7 @@ class UIProvider:
     # --- UIProvider protocol ---
 
     def on_state_changed(self, state: NatlinkState) -> None:
+        self._latest_phase = state.phase
         icon = _ICON_MAP.get(state.phase, "disconnected")
         tooltip = _TOOLTIPS.get(state.phase, "Natlink")
         if state.phase == PHASE_ERROR and state.error_message:
@@ -117,6 +121,31 @@ class UIProvider:
     def _toggle_show_on_error():
         from ._config import toggle_bool
         toggle_bool("settings", "show_on_error", fallback=False)
+
+    # --- Inactive (release/reclaim Dragon — issue #228) ---
+
+    def _is_inactive(self):
+        return self._latest_phase == PHASE_INACTIVE
+
+    def _toggle_inactive(self):
+        """Release or reclaim Dragon. Runs on the worker thread.
+
+        Enabling releases the single Dragon connection (and all grammars,
+        callbacks, and timers) so another process can connect — gated behind
+        a confirmation dialog. Disabling reconnects without confirmation.
+        """
+        if self._is_inactive():
+            natlink_compat.set_inactive(False)
+            return
+        from natlink_compat import msgbox, MB_ICONWARNING, MB_YESNO, IDYES
+        confirm = msgbox(
+            "Go inactive and release Dragon?\n\n"
+            "This drops all active grammars, callbacks, and timers and frees "
+            "the Dragon connection so another process can connect. Natlink "
+            "stays inactive until you uncheck this item.",
+            "Natlink", MB_YESNO | MB_ICONWARNING)
+        if confirm == IDYES:
+            natlink_compat.set_inactive(True)
 
     # --- Desktop file-opening actions ---
 
@@ -245,6 +274,19 @@ class UIProvider:
             *group_menus,
         ]
 
+    def _build_loader_submenu(self):
+        """Build the Loaders submenu from current loader states."""
+        loader_items = [("Reload Grammars", lambda: natlink_compat.reload_grammars(), None)]
+        states = natlink_compat.get_loader_states()
+        if states:
+            loader_items.append(None)
+        for name, _enabled, _running in states:
+            loader_items.append(
+                (name,
+                 (lambda n: lambda: natlink_compat.toggle_loader(n))(name),
+                 (lambda n: lambda: {s[0]: s[1] for s in natlink_compat.get_loader_states()}.get(n, True))(name)))
+        return loader_items
+
     def _build_menu(self):
         w = self._window
 
@@ -260,20 +302,14 @@ class UIProvider:
             ("Natlink Log", self._open_natlink_log, None),
             ("Dragon Log", self._open_dragon_log, None),
             None,
-            ("submenu", "Logging", self._build_logging_submenu()),
+            # Lazy: rebuilt on each right-click so log categories added or
+            # removed after startup appear.
+            ("submenu", "Logging", self._build_logging_submenu),
         ])
 
         w.add_separator()
-        loader_items = [("Reload Grammars", lambda: natlink_compat.reload_grammars(), None)]
-        states = natlink_compat.get_loader_states()
-        if states:
-            loader_items.append(None)
-        for name, _enabled, _running in states:
-            loader_items.append(
-                (name,
-                 (lambda n: lambda: natlink_compat.toggle_loader(n))(name),
-                 (lambda n: lambda: {s[0]: s[1] for s in natlink_compat.get_loader_states()}.get(n, True))(name)))
-        w.add_submenu("Loaders", loader_items)
+        # Lazy: rebuilt on each right-click so loaders reflect current state.
+        w.add_submenu("Loaders", self._build_loader_submenu)
 
         w.add_submenu("Configure", [
             ("Edit Config", self._open_config, None),
@@ -295,6 +331,7 @@ class UIProvider:
                 natlink_compat.start_dragon()
 
         w.add_menu_item(_dragon_label, _dragon_action)
+        w.add_menu_item("Inactive (release Dragon)", self._toggle_inactive, self._is_inactive)
         w.add_menu_item("Exit", lambda: natlink_compat.exit_natlink())
 
 
@@ -341,14 +378,14 @@ def bootstrap_config() -> int:
               "Install Dragon first, then run: natlink-ui")
         return 1
 
-    from natlink_com import print_config
+    from natlink_compat import print_config
     print_config(cfg)
     return 0
 
 
 def install_ui(*, startup: bool = False) -> int:
     """Configure runtime and install default UI integration."""
-    from natlink_com import request_shutdown
+    from natlink_compat import request_shutdown
     from . import _shortcuts
 
     # Stop running natlink instance to avoid config/shortcut conflicts
@@ -375,7 +412,7 @@ def install_ui(*, startup: bool = False) -> int:
 
 def uninstall_ui(*, remove_config: bool = True) -> int:
     """Remove default UI integration and optionally natlink.ini."""
-    from natlink_com import request_shutdown
+    from natlink_compat import request_shutdown
     from . import _shortcuts
 
     if request_shutdown():

@@ -10,7 +10,7 @@ from unittest.mock import patch
 class TestInstallUI(unittest.TestCase):
 
     @patch("natlink_ui._shortcuts.create_desktop_shortcut", return_value=True)
-    @patch("natlink_com.print_config")
+    @patch("natlink_compat.print_config")
     @patch("natlink_compat.configure_runtime")
     def test_install_ui_configures_runtime_and_desktop_shortcut(
         self,
@@ -35,7 +35,7 @@ class TestInstallUI(unittest.TestCase):
 
     @patch("natlink_ui._shortcuts.install_startup", return_value=True)
     @patch("natlink_ui._shortcuts.create_desktop_shortcut", return_value=True)
-    @patch("natlink_com.print_config")
+    @patch("natlink_compat.print_config")
     @patch("natlink_compat.configure_runtime")
     def test_install_ui_with_startup_installs_startup_shortcut(
         self,
@@ -75,7 +75,7 @@ class TestUninstallUI(unittest.TestCase):
     @patch("natlink_ui._shortcuts.remove_desktop_shortcut", return_value=True)
     @patch("natlink_ui._shortcuts.uninstall_startup", return_value=True)
     @patch("natlink_compat.stop_dragon")
-    @patch("natlink_com.request_shutdown", return_value=True)
+    @patch("natlink_compat.request_shutdown", return_value=True)
     def test_uninstall_ui_removes_shortcuts_and_config(
         self,
         mock_request_shutdown,
@@ -105,7 +105,7 @@ class TestUninstallUI(unittest.TestCase):
     @patch("natlink_ui._shortcuts.remove_desktop_shortcut", return_value=True)
     @patch("natlink_ui._shortcuts.uninstall_startup", return_value=True)
     @patch("natlink_compat.stop_dragon")
-    @patch("natlink_com.request_shutdown", return_value=False)
+    @patch("natlink_compat.request_shutdown", return_value=False)
     def test_uninstall_ui_keep_config_skips_config_removal(
         self,
         mock_request_shutdown,

@@ -27,6 +27,7 @@ PHASE_CONNECTING = "connecting"
 PHASE_LOADING_PROFILE = "loading_profile"
 PHASE_CONNECTED = "connected"
 PHASE_RESTARTING = "restarting"
+PHASE_INACTIVE = "inactive"  # released so another process can connect (issue #228)
 PHASE_ERROR = "error"
 
 

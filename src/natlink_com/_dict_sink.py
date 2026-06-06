@@ -12,6 +12,7 @@ both when a \"Scratch That\" command occurs."
 -- Joel Gould, DictationObject.cpp (CVDct0NotifySink class comment)
 """
 
+import contextlib
 import ctypes
 import logging
 
@@ -52,6 +53,7 @@ def _build_sink_class():
             super().__init__()
             self._dict_handle = dict_handle
             self._text_iface = None  # IVDct0TextW, set after registration
+            self._dict_obj = None    # ComDictObj, set after registration
             self._connection = connection
 
         # --- IDgnGetSinkFlags ---
@@ -179,6 +181,26 @@ def _build_sink_class():
 
         # --- Internal dispatch ---
 
+        @contextlib.contextmanager
+        def _lock_for_callback(self):
+            """Lock the text buffer honoring ComDictObj's lock-count state.
+
+            Prefer the obj's _auto_lock so we don't acquire/release a lock the
+            user already holds.  Fall back to a direct lock only if the obj
+            reference is missing (it is wired up right after registration).
+            """
+            dict_obj = getattr(self, "_dict_obj", None)
+            if dict_obj is not None:
+                with dict_obj._auto_lock():
+                    yield
+                return
+            from ._dict_obj import _acquire_lock
+            _acquire_lock(self._text_iface)
+            try:
+                yield
+            finally:
+                self._text_iface.UnLock()
+
         def _handle_text_sel_changed(self):
             """Selection changed without text change: lock, get sel, defer dispatch.
 
@@ -190,8 +212,6 @@ def _build_sink_class():
             text changes.  We match that: extract data on the RPC thread while
             the lock is held, then defer the callback to the main thread.
             """
-            from ._dict_obj import _acquire_lock
-
             conn = self._connection
             cb = conn.on_dict_text_changed if conn else None
             if cb is None:
@@ -201,12 +221,11 @@ def _build_sink_class():
             if text_iface is None:
                 return
 
-            _acquire_lock(text_iface)
-            try:
+            # Route through the obj's lock accounting so we never UnLock a lock
+            # the user still holds (which would desync ComDictObj._lock_count).
+            with self._lock_for_callback():
                 sel_start, sel_count = text_iface.TextSelGet()
                 sel_end = sel_start + sel_count
-            finally:
-                text_iface.UnLock()
 
             # "setting this will delay recognition at the start of the next
             # utterance until results are processed"
@@ -224,8 +243,6 @@ def _build_sink_class():
             text changes.  We match that: extract data on the RPC thread while
             the lock is held, then defer the callback to the main thread.
             """
-            from ._dict_obj import _acquire_lock
-
             conn = self._connection
             cb = conn.on_dict_text_changed if conn else None
             if cb is None:
@@ -235,8 +252,9 @@ def _build_sink_class():
             if text_iface is None:
                 return
 
-            _acquire_lock(text_iface)
-            try:
+            # Route through the obj's lock accounting so we never UnLock a lock
+            # the user still holds (which would desync ComDictObj._lock_count).
+            with self._lock_for_callback():
                 # C++: "Ask NatSpeak for what region of text changed"
                 new_start, new_end, old_start, old_end = text_iface.GetChanges()
 
@@ -250,9 +268,6 @@ def _build_sink_class():
 
                 sel_start, sel_count = text_iface.TextSelGet()
                 sel_end = sel_start + sel_count
-
-            finally:
-                text_iface.UnLock()
 
             # "setting this will delay recognition at the start of the next
             # utterance until results are processed"

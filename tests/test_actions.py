@@ -69,22 +69,23 @@ class TestLoaderActions(unittest.TestCase):
     def test_get_loader_states_caches_result(self):
         from natlink_compat import _actions
 
-        with patch.object(_actions, "_loader_states_cache", None):
-            with patch("natlink_compat._loaders.get_all_loader_names",
-                       return_value=[("natlinkcore", "natlinkcore")]):
-                with patch("natlink_compat._loaders.get_disabled_loaders",
-                           return_value=set()):
-                    with patch("natlink_compat._loaders.get_loaders",
-                               return_value=[]):
-                        result = _actions.get_loader_states()
-                        self.assertEqual(result, [("natlinkcore", True, False)])
+        _actions.invalidate_loader_cache()
+        with patch("natlink_compat._loaders.get_all_loader_names",
+                   return_value=[("natlinkcore", "natlinkcore")]):
+            with patch("natlink_compat._loaders.get_disabled_loaders",
+                       return_value=set()):
+                with patch("natlink_compat._loaders.get_loaders",
+                           return_value=[]):
+                    result = _actions.get_loader_states()
+                    self.assertEqual(result, [("natlinkcore", True, False)])
 
     def test_get_loader_states_returns_cached(self):
         from natlink_compat import _actions
+        from natlink_compat._state import _state
 
         cached = [("cached_loader", False, False)]
-        with _actions._loader_cache_lock:
-            _actions._loader_states_cache = cached
+        with _state.loader_cache_lock:
+            _state.loader_states_cache = cached
 
         result = _actions.get_loader_states()
         self.assertEqual(result, cached)
@@ -94,14 +95,15 @@ class TestLoaderActions(unittest.TestCase):
 
     def test_invalidate_loader_cache(self):
         from natlink_compat import _actions
+        from natlink_compat._state import _state
 
-        with _actions._loader_cache_lock:
-            _actions._loader_states_cache = [("x", True, False)]
+        with _state.loader_cache_lock:
+            _state.loader_states_cache = [("x", True, False)]
 
         _actions.invalidate_loader_cache()
 
-        with _actions._loader_cache_lock:
-            self.assertIsNone(_actions._loader_states_cache)
+        with _state.loader_cache_lock:
+            self.assertIsNone(_state.loader_states_cache)
 
     def test_get_loader_states_returns_empty_on_error(self):
         from natlink_compat import _actions

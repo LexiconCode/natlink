@@ -61,4 +61,4 @@ class GUID(ctypes.Structure):
                 self.Data4[i] = b
 
 
-from natlink_com import msgbox, MB_ICONERROR  # noqa: F401
+from natlink_compat import msgbox, MB_ICONERROR  # noqa: F401

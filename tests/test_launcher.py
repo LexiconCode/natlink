@@ -249,13 +249,16 @@ class TestDoRestartOnMainAbort(unittest.TestCase):
              patch.object(_launcher, "_connect", return_value=True) as mock_connect, \
              patch.object(_launcher, "_start_monitor_if_needed") as mock_monitor, \
              patch.object(natlink_com, "_dragon", mock_dragon), \
+             patch("natlink_compat._lifecycle._disconnect") as mock_disconnect, \
              patch("natlink_compat._state._state", state):
             _launcher._do_restart_on_main(session, natlink)
 
         return {
             "stop_monitor": session.stop_monitor.call_count,
             "save_profile": mock_dragon.save_profile.call_count,
-            "natDisconnect": natlink.natDisconnect.call_count,
+            # Restart uses the internal real teardown (_disconnect); the public
+            # natDisconnect no-ops while the launcher is active (issue #228).
+            "natDisconnect": mock_disconnect.call_count,
             "dragon_stop": mock_dragon.stop.call_count,
             "dragon_start": mock_dragon.start.call_count,
             "probe": mock_probe.call_count,

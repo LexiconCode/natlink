@@ -19,6 +19,7 @@ from natlink_com._launcher import (
     _wait_for_com_ready, _wait_for_dragon_window, _wait_for_profile_via_log,
     _acquire_single_instance,
     _SHUTDOWN_EVENT_NAME, _RESTART_EVENT_NAME,
+    _DEACTIVATE_EVENT_NAME, _ACTIVATE_EVENT_NAME,
 )
 from natlink_com._win32 import kernel32
 
@@ -35,6 +36,9 @@ class Launcher:
     restart: int
     dragon_exited: int
     dragon_reappeared: int
+    deactivate: int = 0          # issue #228: release Dragon to another process
+    activate: int = 0            # issue #228: reconnect Dragon
+    inactive: bool = False       # True while Dragon is intentionally released
     _monitor_thread: threading.Thread | None = None
     _monitor_stop: threading.Event = field(default_factory=threading.Event)
 
@@ -68,7 +72,8 @@ class Launcher:
 
     def close_handles(self) -> None:
         for h in (self.shutdown, self.restart,
-                  self.dragon_exited, self.dragon_reappeared):
+                  self.dragon_exited, self.dragon_reappeared,
+                  self.deactivate, self.activate):
             if h:
                 kernel32.CloseHandle(h)
 
@@ -226,7 +231,8 @@ def _do_restart_on_main(launcher, natlink):
 
         if _state.connected:
             try:
-                natlink.natDisconnect()
+                from ._lifecycle import _disconnect
+                _disconnect()  # real teardown (public natDisconnect no-ops while launcher-active)
             except Exception:
                 log.debug("Restart: disconnect error", exc_info=True)
 
@@ -270,7 +276,8 @@ def _handle_dragon_exited(launcher, natlink):
     will signal dragon_reappeared if Dragon comes back."""
     if launcher.connected:
         try:
-            natlink.natDisconnect()
+            from ._lifecycle import _disconnect
+            _disconnect()  # real teardown (public natDisconnect no-ops while launcher-active)
         except Exception:
             log.debug("Disconnect error", exc_info=True)
     gc.collect()
@@ -304,6 +311,64 @@ def _handle_dragon_reappeared(launcher, natlink):
             _start_monitor_if_needed(launcher)
 
 
+def _do_deactivate_on_main(launcher, natlink):
+    """Release Dragon and enter the inactive state (issue #228).
+
+    Stops the monitor, saves the profile, then disconnects — which releases
+    every grammar, callback, and timer and drops the NatlinkConnectionActive
+    mutex so another process (a standalone loader or test suite) can take
+    ownership. That process must release its resources and call natDisconnect
+    when finished; the user reconnects natlink via the tray (Inactive off).
+    """
+    if launcher.inactive:
+        return
+    from ._ui_protocol import set_phase, PHASE_INACTIVE, notify_text
+    from natlink_com import _dragon
+    from ._state import _state
+
+    log.info("Deactivate: releasing Dragon connection (inactive state)")
+    launcher.inactive = True
+    launcher.stop_monitor()
+
+    conn = _state.conn
+    if conn:
+        _dragon.save_profile(conn)
+    if _state.connected:
+        try:
+            from ._lifecycle import _disconnect
+            _disconnect()  # real teardown — releases the connection mutex
+        except Exception:
+            log.debug("Deactivate: disconnect error", exc_info=True)
+    gc.collect()
+    set_phase(PHASE_INACTIVE)
+    notify_text("[Natlink inactive — Dragon connection released. "
+                "Another process may now connect.]\r\n")
+
+
+def _do_activate_on_main(launcher, natlink):
+    """Leave the inactive state and reconnect to Dragon (issue #228).
+
+    Stays inactive if reconnection fails (e.g. another process still owns
+    the connection), so the UI keeps reflecting the released state.
+    """
+    if not launcher.inactive:
+        return
+    from ._ui_protocol import notify_text
+
+    log.info("Activate: reconnecting to Dragon")
+    if not _probe_and_wait(launcher.shutdown,
+                           wait_for_window=True, wait_for_profile=True):
+        log.info("Activate: shutdown requested while waiting for Dragon")
+        return
+    if _connect(natlink, launcher.discovered):
+        launcher.inactive = False
+        _start_monitor_if_needed(launcher)
+        notify_text("[Natlink active — reconnected to Dragon.]\r\n")
+    else:
+        notify_text("[Natlink could not reconnect — another process may "
+                    "still own the Dragon connection.]\r\n")
+
+
 # ---------------------------------------------------------------------------
 # Pump loop
 # ---------------------------------------------------------------------------
@@ -317,8 +382,10 @@ def _pump_loop(launcher, natlink):
     from natlink_com._pump import pump
 
     handles = [launcher.shutdown, launcher.restart,
-               launcher.dragon_exited, launcher.dragon_reappeared]
-    _SHUTDOWN, _RESTART, _EXITED, _REAPPEARED = 0, 1, 2, 3
+               launcher.dragon_exited, launcher.dragon_reappeared,
+               launcher.deactivate, launcher.activate]
+    _SHUTDOWN, _RESTART, _EXITED, _REAPPEARED, _DEACTIVATE, _ACTIVATE = (
+        0, 1, 2, 3, 4, 5)
 
     _pump_active.running = True
     try:
@@ -330,15 +397,26 @@ def _pump_loop(launcher, natlink):
                 log.info("Shutdown event signaled")
                 return
             if rc == _RESTART:
-                log.info("Restart Dragon event signaled")
-                _do_restart_on_main(launcher, natlink)
+                if launcher.inactive:
+                    log.info("Restart ignored — natlink is inactive")
+                else:
+                    log.info("Restart Dragon event signaled")
+                    _do_restart_on_main(launcher, natlink)
             elif rc == _EXITED:
                 kernel32.ResetEvent(launcher.dragon_exited)
+                if launcher.inactive:
+                    continue  # we released Dragon on purpose
                 log.info("Dragon is shutting down — disconnecting")
                 _handle_dragon_exited(launcher, natlink)
             elif rc == _REAPPEARED:
                 kernel32.ResetEvent(launcher.dragon_reappeared)
+                if launcher.inactive:
+                    continue  # don't reclaim the connection while inactive
                 _handle_dragon_reappeared(launcher, natlink)
+            elif rc == _DEACTIVATE:
+                _do_deactivate_on_main(launcher, natlink)
+            elif rc == _ACTIVATE:
+                _do_activate_on_main(launcher, natlink)
     except KeyboardInterrupt:
         pass
     finally:
@@ -354,11 +432,13 @@ def _teardown(launcher, natlink):
     """Clean disconnect, stop UI provider, close event handles."""
     from ._state import _state
     from ._actions import stop_provider
+    from ._lifecycle import _disconnect
 
     launcher.stop_monitor()
 
     if _state.connected:
-        natlink.natDisconnect()
+        _disconnect()  # real teardown (public natDisconnect no-ops while launcher-active)
+    _state.launcher_active = False
 
     provider = _state.ui_provider
     _state.ui_provider = None
@@ -376,8 +456,12 @@ def run():
     _acquire_single_instance()
     sys.coinit_flags = 2  # STA
 
-    src_dir = str(Path(__file__).resolve().parent.parent)
-    if src_dir not in sys.path:
+    # Only prepend the checkout's src/ when running from a source tree.
+    # An installed package lives under site-packages, whose parent must
+    # not be inserted at the front of sys.path.
+    src_path = Path(__file__).resolve().parent.parent
+    src_dir = str(src_path)
+    if src_path.name == "src" and src_dir not in sys.path:
         sys.path.insert(0, src_dir)
 
     ole32.CoInitializeEx(None, 2)  # STA, idempotent
@@ -390,6 +474,9 @@ def run():
 
     from ._lifecycle import discover_loaders
     from ._state import _state
+    # Launcher owns the process + the single shared connection (issue #228),
+    # so loader re-entrant natConnect/natDisconnect calls become no-ops.
+    _state.launcher_active = True
     discovered = discover_loaders()
     if _state.ui_provider is None:
         _state.ui_provider = _discover_ui_provider()
@@ -401,6 +488,8 @@ def run():
         restart=kernel32.CreateEventW(None, False, False, _RESTART_EVENT_NAME),
         dragon_exited=kernel32.CreateEventW(None, True, False, DRAGON_EXITED_EVENT),
         dragon_reappeared=kernel32.CreateEventW(None, True, False, DRAGON_REAPPEARED_EVENT),
+        deactivate=kernel32.CreateEventW(None, False, False, _DEACTIVATE_EVENT_NAME),
+        activate=kernel32.CreateEventW(None, False, False, _ACTIVATE_EVENT_NAME),
     )
 
     import natlink_compat as natlink

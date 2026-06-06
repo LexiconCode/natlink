@@ -395,6 +395,7 @@ class NatlinkWindow:
         self._menu_items = []
         self._menu_lock = threading.Lock()
         self._menu_callbacks = {}
+        self._menu_id_max = _IDM_BASE
 
         # Load saved geometry / topmost (single config read)
         cfg = load_config() if load_config else None
@@ -616,6 +617,10 @@ class NatlinkWindow:
                 user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
             elif isinstance(item, tuple) and item[0] == "submenu":
                 _, label, subitems = item
+                # subitems may be a callable so dynamic submenus (loaders,
+                # log categories) reflect current state on each right-click.
+                if callable(subitems):
+                    subitems = subitems()
                 sub, idm = self._build_menu(subitems, callbacks, idm)
                 user32.AppendMenuW(menu, MF_POPUP, sub, label)
             else:
@@ -631,12 +636,18 @@ class NatlinkWindow:
         callbacks = {}
         with self._menu_lock:
             items = list(self._menu_items)
-        menu, _ = self._build_menu(items, callbacks, _IDM_BASE)
+        # ID counter resets to _IDM_BASE on every build so the command-ID
+        # space stays bounded regardless of menu size.
+        menu, next_id = self._build_menu(items, callbacks, _IDM_BASE)
+        self._menu_id_max = next_id
         self._menu_callbacks = callbacks
         pt = wt.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         user32.SetForegroundWindow(self._hwnd)
         user32.TrackPopupMenu(menu, 0, pt.x, pt.y, 0, self._hwnd, None)
+        # Canonical Win32 fix: post WM_NULL so the menu dismisses on the
+        # first outside-click (see KB135788).
+        user32.PostMessageW(self._hwnd, 0x0000, 0, 0)  # WM_NULL
         user32.DestroyMenu(menu)
 
     # ------------------------------------------------------------------
@@ -760,9 +771,11 @@ class NatlinkWindow:
                 self._show_menu()
             return 0
         if msg == WM_COMMAND:
-            cb = self._menu_callbacks.get(wparam & 0xFFFF)
-            if cb:
-                _dispatch_async(cb)
+            cmd_id = wparam & 0xFFFF
+            if _IDM_BASE <= cmd_id < self._menu_id_max:
+                cb = self._menu_callbacks.get(cmd_id)
+                if cb:
+                    _dispatch_async(cb)
             return 0
 
         # --- Output messages ---

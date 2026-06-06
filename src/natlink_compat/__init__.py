@@ -14,12 +14,13 @@ from ._lifecycle import natConnect, natDisconnect, isNatSpeakRunning, waitForSpe
 from ._callbacks import setBeginCallback, setChangeCallback, setTimerCallback
 from ._ui_protocol import (UIProvider, NatlinkState,
     PHASE_IDLE, PHASE_WAITING_FOR_DRAGON, PHASE_CONNECTING,
-    PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING, PHASE_ERROR)
+    PHASE_LOADING_PROFILE, PHASE_CONNECTED, PHASE_RESTARTING,
+    PHASE_INACTIVE, PHASE_ERROR)
 from ._actions import (
     is_dragon_running, start_dragon, stop_dragon, restart_dragon, dragon_status,
     reload_grammars, toggle_loader, get_loader_states,
     toggle_auto_launch, is_auto_launch_enabled,
-    set_mic, exit_natlink,
+    set_mic, exit_natlink, set_inactive,
     stop_provider,
 )
 from ._logging_control import (
@@ -148,6 +149,12 @@ def run():
 
 
 from ._loaders import add_loader, remove_loader, reload_loader, get_loaders
+# Re-exports of natlink_com seams so the UI imports through the compat layer
+# rather than reaching into natlink_com directly (preserves the layer boundary).
+from natlink_com import (
+    msgbox, MB_ICONERROR, MB_ICONWARNING, MB_ICONQUESTION, MB_YESNO, IDYES, IDNO,
+    IniFile, print_config, request_shutdown,
+)
 from ._gram_obj import GramObj
 from ._res_obj import ResObj
 from ._dict_obj import DictObj
@@ -184,9 +191,10 @@ __all__ = [
     "list_log_categories", "get_log_category",
     "set_log_level", "reset_log_level", "reset_log_levels",
     "list_log_presets", "apply_log_preset",
-    "set_mic", "exit_natlink",
+    "set_mic", "exit_natlink", "set_inactive",
     "PHASE_IDLE", "PHASE_WAITING_FOR_DRAGON", "PHASE_CONNECTING",
-    "PHASE_LOADING_PROFILE", "PHASE_CONNECTED", "PHASE_RESTARTING", "PHASE_ERROR",
+    "PHASE_LOADING_PROFILE", "PHASE_CONNECTED", "PHASE_RESTARTING",
+    "PHASE_INACTIVE", "PHASE_ERROR",
     "playString", "playEvents", "execScript",
     "recognitionMimic", "notify_text", "displayText",
     "getClipboard", "getCursorPos", "getScreenSize",
@@ -200,6 +208,9 @@ __all__ = [
     "ensure_natlinkcore_logging",
     # Loader management
     "LoaderProtocol", "add_loader", "remove_loader", "reload_loader", "get_loaders",
+    # natlink_com seams re-exported for the UI layer
+    "msgbox", "MB_ICONERROR", "MB_ICONWARNING", "MB_ICONQUESTION", "MB_YESNO",
+    "IDYES", "IDNO", "IniFile", "print_config", "request_shutdown",
     # Classes
     "GramObj", "ResObj", "DictObj",
     # Exceptions

@@ -38,6 +38,31 @@ _marshal_lock = threading.Lock()
 
 
 
+def _sink_com_refcount(sink) -> int:
+    """Return a comtypes server's external COM refcount, robustly.
+
+    comtypes.COMObject stores its refcount in ``_refcnt``, a
+    ``ctypes.c_long`` initialized to 0 and driven by IUnknown_AddRef /
+    IUnknown_Release (Dragon's cross-process refs).  Our Python attribute
+    (``self._engine_sink``) is NOT an AddRef and does not count.  When
+    Dragon has released every ref the value reaches 0.
+
+    A None sink, or one whose refcount cannot be read, is treated as
+    already-drained (returns 0) — never block teardown on a value we
+    cannot trust.
+    """
+    if sink is None:
+        return 0
+    refcnt = getattr(sink, "_refcnt", None)
+    if refcnt is None:
+        return 0
+    value = getattr(refcnt, "value", refcnt)  # c_long → int, or plain int
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _detect_dragon_major() -> int:
     """Detect Dragon major version — delegates to _config.detect_dragon_major."""
     from ._config import detect_dragon_major
@@ -502,15 +527,42 @@ class DragonConnection:
                 log.debug("Failed to release raw %s", name, exc_info=True)
         self._raw_ptrs.clear()
 
-        # Pump messages so Dragon's LRPC channel processes the Releases
+        # Pump messages so Dragon's LRPC channel delivers the Releases it
+        # owes on our sink COMObjects.  Bounded drain on the real signal —
+        # both sinks' external COM refcount reaching 0 — instead of a fixed
+        # nap.  Dragon's Releases arrive as incoming RPC calls dispatched
+        # through this STA thread's message queue, so we wait briefly for
+        # input between dispatch passes and re-check the refcounts.
         from ._pump import pump
-        pump()
+        from ._win32 import user32 as _u32
         import time
-        time.sleep(0.1)
+
+        _QS_ALLINPUT = 0x04FF
+        _WAIT_TIMEOUT = 0x102
+        _SLICE_MS = 20
+        _BUDGET_S = 0.5
+
+        pump()
+        deadline = time.monotonic() + _BUDGET_S
+        while (_sink_com_refcount(self._engine_sink)
+               or _sink_com_refcount(self._action_sink)):
+            if time.monotonic() >= deadline:
+                log.debug(
+                    "disconnect: sink Release drain timed out "
+                    "(engine=%d, action=%d refs remaining)",
+                    _sink_com_refcount(self._engine_sink),
+                    _sink_com_refcount(self._action_sink),
+                )
+                break
+            # Block up to a slice for the next incoming Release RPC (or wake
+            # early when one arrives), then dispatch it.
+            _u32.MsgWaitForMultipleObjects(0, None, False, _SLICE_MS, _QS_ALLINPUT)
+            pump()
         pump()
 
-        # NOW safe to release sinks — Dragon has processed the session
-        # teardown and released its references to our sink objects.
+        # NOW safe to release sinks — Dragon has released its references to
+        # our sink objects (external COM refcount 0), so dropping the Python
+        # reference cannot strand a live cross-process pointer.
         self._engine_sink = None
         self._action_sink = None
 

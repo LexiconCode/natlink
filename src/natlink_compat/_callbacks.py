@@ -492,9 +492,14 @@ def setTimerCallback(pCallback: object, nMilliseconds: int = 50):
         pCallback: A callable or ``None`` to clear.
         nMilliseconds: Timer interval in milliseconds (default 50).
     """
-    from ._helpers import _require_connected, com_call
-    _require_connected()
+    from ._helpers import com_call
     _set_callback(_state.timer_callbacks, pCallback)
+    # Legacy natlink allowed registration before natConnect. Record the
+    # callback unconditionally; only drive the COM timer when connected.
+    if not _state.connected or _state.backend is None:
+        log.debug("setTimerCallback recorded while disconnected; "
+                  "COM timer not started")
+        return
     com_call(
         "setTimerCallback",
         _state.backend.set_timer_callback,

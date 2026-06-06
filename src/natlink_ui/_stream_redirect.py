@@ -25,7 +25,13 @@ class _OutputRedirector:
                 from natlink_compat import notify_text
                 notify_text(text, level=self._level)
             except Exception:
-                pass  # never let UI dispatch crash the caller
+                # Never let UI dispatch crash the caller; fall back to the
+                # original stream so early-startup output isn't lost.
+                if self._original is not None:
+                    try:
+                        self._original.write(text)
+                    except Exception:
+                        pass
         return len(text) if text else 0
 
     def writelines(self, lines) -> None:

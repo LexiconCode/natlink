@@ -37,12 +37,19 @@ user32.MsgWaitForMultipleObjects.restype = ctypes.wintypes.DWORD
 
 
 MB_OK = 0x0
+MB_YESNO = 0x4
 MB_ICONERROR = 0x10
+MB_ICONQUESTION = 0x20
 MB_ICONWARNING = 0x30
+
+# MessageBox return values (button IDs)
+IDOK = 1
+IDYES = 6
+IDNO = 7
 
 
 def msgbox(text: str, title: str = "Natlink", flags: int = MB_OK) -> int:
-    """Show a Windows message box. Returns the button ID."""
+    """Show a Windows message box. Returns the button ID (e.g. IDYES/IDNO)."""
     return user32.MessageBoxW(None, text, title, flags)
 
 

@@ -70,6 +70,18 @@ class _NatlinkState:
         # Connection mutex handle (Win32)
         self._conn_mutex = None
 
+        # True when the launcher owns the process + the shared connection
+        # (issue #228). Gates re-entrant natConnect/natDisconnect from loaders
+        # into no-ops. Process-scoped — NOT cleared by reset().
+        self.launcher_active = False
+
+        # Cached (name, enabled, running) loader tuples for UI menus/snapshots.
+        # None = stale; recomputed by _actions.get_loader_states(). Owned here
+        # so reset() can clear it directly without importing _actions
+        # (avoids the compat -> actions -> state cycle).
+        self.loader_states_cache = None
+        self.loader_cache_lock = threading.Lock()
+
         self.lock = threading.Lock()
 
     @property
@@ -112,8 +124,8 @@ class _NatlinkState:
         self.last_mic_state = ""
         self.last_user_name = ""
         self.last_user_dir = ""
-        from ._actions import invalidate_loader_cache
-        invalidate_loader_cache()
+        with self.loader_cache_lock:
+            self.loader_states_cache = None
         if self._conn_mutex:
             import ctypes
             ctypes.windll.kernel32.CloseHandle(self._conn_mutex)

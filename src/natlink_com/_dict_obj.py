@@ -487,6 +487,7 @@ def create_dictation(conn):
 
     sink._dict_handle = dict_obj.handle
     sink._text_iface = text_iface
+    sink._dict_obj = dict_obj
     conn.register_dict_sink(dict_obj.handle, sink)
 
     log.debug("Created dictation object (handle=%d)", dict_obj.handle)
