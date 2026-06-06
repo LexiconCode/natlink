@@ -40,9 +40,15 @@ class _NatlinkState:
         self.last_user_dir: str = ""
 
         # Global callback stacks — multiple loaders can each register one.
-        self.begin_callbacks: List[Callable] = []
-        self.change_callbacks: List[Callable] = []
-        self.timer_callbacks: List[Callable] = []
+        # Entries are _callbacks._CB records (fn + owning loader); kept as
+        # ordered lists so dispatch fires in registration order.
+        self.begin_callbacks: list = []
+        self.change_callbacks: list = []
+        self.timer_callbacks: list = []
+        # Loader currently being started/stopped (set via
+        # _callbacks.loader_registration). Callbacks registered while this is
+        # set are tagged with that loader for precise per-loader teardown.
+        self.registering_loader = None
         # Handle -> wrapper registries (populated by GramObj.load / DictObj).
         # These must not own object lifetime: the original C++ kept raw
         # pointers in linked lists, while Python refcount/dealloc triggered

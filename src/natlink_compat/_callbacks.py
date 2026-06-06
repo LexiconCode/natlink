@@ -14,6 +14,7 @@ This module provides:
 import logging
 import time
 from contextlib import contextmanager
+from typing import NamedTuple
 
 from ._state import _state
 from ._res_obj import ResObj
@@ -368,6 +369,52 @@ def dispatch_dict_begin_callback(dict_handle, module_info):
 
 # --- Public callback registration API ---
 
+class _CB(NamedTuple):
+    """A registered callback plus its owning loader package.
+
+    ``owner`` is the top-level package name of the loader that was being
+    started when the callback registered (or ``None`` if registered outside
+    any loader context). A package name — not the loader object — because a
+    loader may self-register an instance that differs from the module passed
+    to start(); the package stays consistent across both.
+
+    Callable so dispatch can invoke entries uniformly (``cb(...)``) whether
+    they are wrapped records or bare callables placed directly on the lists.
+    """
+    fn: object
+    owner: object  # package-name str, or None
+
+    def __call__(self, *args, **kwargs):
+        return self.fn(*args, **kwargs)
+
+
+def _entry_fn(entry):
+    """The underlying callable of a list entry (record or bare callable)."""
+    return entry.fn if isinstance(entry, _CB) else entry
+
+
+def _entry_owner(entry):
+    """The owning package of a list entry, or None for untagged/bare entries."""
+    return entry.owner if isinstance(entry, _CB) else None
+
+
+@contextmanager
+def loader_registration(loader):
+    """Tag callbacks registered within this block with ``loader``'s package.
+
+    Set around a loader's start()/stop() so begin/change/timer callbacks the
+    loader (or its grammar modules) register are attributed to it, enabling
+    precise per-loader teardown on reload/remove — including lambdas and
+    cross-package helpers that owner-inference alone cannot attribute.
+    """
+    prev = _state.registering_loader
+    _state.registering_loader = _loader_package(loader) or None
+    try:
+        yield
+    finally:
+        _state.registering_loader = prev
+
+
 def _get_owner(callback):
     """Determine the owner of a callback for dedup and removal.
 
@@ -386,13 +433,14 @@ def _get_owner(callback):
     return None
 
 
-def _set_callback(cb_list, callback):
-    """Add or remove a callback from a callback list.
+def _set_callback(cb_list, callback, owner_pkg=None):
+    """Add, replace, or clear a callback in a callback list.
 
     If callback is None, removes all entries (full clear).
-    If a callback from the same owner is already registered,
-    replaces it. Otherwise appends. Lambdas with no owner
-    replace any existing ownerless entry to prevent accumulation.
+    If a callback from the same owner is already registered, replaces it.
+    Otherwise appends. Lambdas with no owner replace any existing ownerless
+    entry to prevent accumulation. ``owner_pkg`` records which loader package
+    registered the callback (see ``_CB``) for precise per-loader teardown.
     """
     if callback is None:
         cb_list.clear()
@@ -400,15 +448,15 @@ def _set_callback(cb_list, callback):
 
     owner = _get_owner(callback)
     for i, existing in enumerate(cb_list):
-        existing_owner = _get_owner(existing)
+        existing_owner = _get_owner(_entry_fn(existing))
         if owner is not None and existing_owner == owner:
-            cb_list[i] = callback
+            cb_list[i] = _CB(callback, owner_pkg)
             return
         if owner is None and existing_owner is None:
             # Replace existing ownerless callback (prevents lambda accumulation)
-            cb_list[i] = callback
+            cb_list[i] = _CB(callback, owner_pkg)
             return
-    cb_list.append(callback)
+    cb_list.append(_CB(callback, owner_pkg))
 
 
 def _loader_package(obj):
@@ -425,32 +473,50 @@ def _loader_package(obj):
 
 
 def _remove_callbacks_for(loader):
-    """Remove all callbacks registered by a loader or its helper objects.
+    """Remove all callbacks owned by a loader.
 
-    Matches by:
-    - Bound method owner whose __module__ shares the loader's top-level package
-    - Plain function whose __module__ shares the loader's top-level package
+    Entries tagged with this loader's package (explicit ownership captured at
+    registration via ``loader_registration``) are removed outright. Untagged
+    entries — registered outside any loader context — fall back to top-level
+    package inference on the callback's owner, preserving legacy behavior.
+    Entries tagged with a *different* loader are never removed.
     """
     pkg = _loader_package(loader)
     if not pkg:
         return
 
-    def _owned_by_loader(cb):
-        owner = _get_owner(cb)
+    def _infer_match(fn):
+        owner = _get_owner(fn)
         if owner is loader:
             return True
         # Bound method on a helper object within the same package
         if owner is not None and not isinstance(owner, str):
-            owner_pkg = _loader_package(owner)
-            return owner_pkg == pkg
+            return _loader_package(owner) == pkg
         # Plain function from the same package
         if isinstance(owner, str):
             return owner.split(".")[0] == pkg
         return False
 
+    def _owned(entry):
+        owner = _entry_owner(entry)
+        if owner is not None:
+            return owner == pkg                # explicit tag is authoritative
+        return _infer_match(_entry_fn(entry))  # untagged: legacy inference
+
+    had_timer = bool(_state.timer_callbacks)
     for cb_list in (_state.begin_callbacks, _state.change_callbacks,
                     _state.timer_callbacks):
-        cb_list[:] = [cb for cb in cb_list if not _owned_by_loader(cb)]
+        cb_list[:] = [e for e in cb_list if not _owned(e)]
+
+    # If removing this loader emptied the timer list, stop Dragon's COM timer
+    # so it doesn't keep firing into an empty dispatch.
+    if had_timer and not _state.timer_callbacks and _state.connected \
+            and _state.backend is not None:
+        try:
+            _state.backend.set_timer_callback(False)
+        except Exception:
+            log.debug("Failed to disable COM timer after loader removal",
+                      exc_info=True)
 
 
 def setBeginCallback(callback):
@@ -467,7 +533,7 @@ def setBeginCallback(callback):
 
     Pass ``None`` to clear the callback.
     """
-    _set_callback(_state.begin_callbacks, callback)
+    _set_callback(_state.begin_callbacks, callback, _state.registering_loader)
 
 
 def setChangeCallback(callback):
@@ -480,7 +546,7 @@ def setChangeCallback(callback):
 
     Pass ``None`` to clear the callback.
     """
-    _set_callback(_state.change_callbacks, callback)
+    _set_callback(_state.change_callbacks, callback, _state.registering_loader)
 
 
 def setTimerCallback(pCallback: object, nMilliseconds: int = 50):
@@ -493,7 +559,7 @@ def setTimerCallback(pCallback: object, nMilliseconds: int = 50):
         nMilliseconds: Timer interval in milliseconds (default 50).
     """
     from ._helpers import com_call
-    _set_callback(_state.timer_callbacks, pCallback)
+    _set_callback(_state.timer_callbacks, pCallback, _state.registering_loader)
     # Legacy natlink allowed registration before natConnect. Record the
     # callback unconditionally; only drive the COM timer when connected.
     if not _state.connected or _state.backend is None:

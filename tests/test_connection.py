@@ -88,14 +88,14 @@ class TestPreConnectionSafe:
     def test_setBeginCallback_stores_and_clears(self):
         cb = lambda info: None
         natlink.setBeginCallback(cb)
-        assert cb in _state.begin_callbacks
+        assert any(e.fn is cb for e in _state.begin_callbacks)
         natlink.setBeginCallback(None)
         assert len(_state.begin_callbacks) == 0
 
     def test_setChangeCallback_stores_and_clears(self):
         cb = lambda t, v: None
         natlink.setChangeCallback(cb)
-        assert cb in _state.change_callbacks
+        assert any(e.fn is cb for e in _state.change_callbacks)
         natlink.setChangeCallback(None)
         assert len(_state.change_callbacks) == 0
 

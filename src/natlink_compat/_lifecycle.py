@@ -93,12 +93,15 @@ def discover_loaders():
     from ._loaders import discover_and_import
     discovered = discover_and_import()
 
-    # Call optional setup() hook on each discovered loader
+    # Call optional setup() hook on each discovered loader, tagging any
+    # callbacks it registers with the loader's package (see loader_registration).
+    from ._callbacks import loader_registration
     for mod, name in discovered:
         setup_fn = getattr(mod, "setup", None)
         if setup_fn and callable(setup_fn):
             try:
-                setup_fn()
+                with loader_registration(mod):
+                    setup_fn()
             except Exception:
                 log.debug("Loader setup() failed: %s", name, exc_info=True)
 

@@ -227,7 +227,11 @@ def _start_impl(loader, mod_name=""):
         if start_fn is None:
             raise AttributeError(f"{name} has no start() or run()")
         log.info("Starting loader: %s", name)
-        start_fn()
+        # Tag callbacks registered during start() with this loader's package
+        # so reload/remove can release exactly its begin/change/timer callbacks.
+        from ._callbacks import loader_registration
+        with loader_registration(loader):
+            start_fn()
         _adopt_loader_logger(loader, mod_name)
         log.info("Loader started: %s", name)
         return True
@@ -353,7 +357,9 @@ def reload_loader(loaders=None):
             log.info("Reloading grammars: %s", name)
             _display(f"Reloading grammars ({name})...\r\n")
             try:
-                trigger(force_load=True)
+                from ._callbacks import loader_registration
+                with loader_registration(target):
+                    trigger(force_load=True)
                 _display(f"Grammars reloaded.\r\n")
             except Exception:
                 log.exception("trigger_load failed: %s", name)

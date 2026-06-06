@@ -477,7 +477,7 @@ class TestCallbackStacking:
         setBeginCallback(loader.cb_v1)
         setBeginCallback(loader.cb_v2)
         assert len(_state.begin_callbacks) == 1
-        assert _state.begin_callbacks[0] == loader.cb_v2
+        assert _state.begin_callbacks[0].fn == loader.cb_v2
 
     def test_exception_in_one_does_not_block_others(self):
         from natlink_compat._callbacks import setBeginCallback, dispatch_begin_callback
@@ -591,3 +591,61 @@ class TestCallbackStacking:
         for _ in range(10):
             setBeginCallback(lambda info: None)
         assert len(_state.begin_callbacks) == 1
+
+    def test_explicit_owner_tag_removes_uninferable_callback(self):
+        """A callback registered under a loader context is removed by tag even
+        when its owner can't be inferred (lambda)."""
+        from natlink_compat._callbacks import (
+            setBeginCallback, _remove_callbacks_for, loader_registration)
+        from natlink_compat._state import _state
+
+        class LoaderA:
+            __module__ = "pkg_a.loader"
+        loader = LoaderA()
+
+        with loader_registration(loader):
+            setBeginCallback(lambda info: None)  # no inferable owner
+        assert len(_state.begin_callbacks) == 1
+        assert _state.begin_callbacks[0].owner == "pkg_a"
+
+        _remove_callbacks_for(loader)
+        assert len(_state.begin_callbacks) == 0
+
+    def test_explicit_tag_survives_other_loader_removal(self):
+        """A tagged callback is not removed by a different loader's teardown."""
+        from natlink_compat._callbacks import (
+            setBeginCallback, _remove_callbacks_for, loader_registration)
+        from natlink_compat._state import _state
+
+        class LoaderA:
+            __module__ = "pkg_a.loader"
+        class LoaderB:
+            __module__ = "pkg_b.loader"
+        a, b = LoaderA(), LoaderB()
+
+        with loader_registration(a):
+            setBeginCallback(lambda info: None)  # tagged pkg_a
+        _remove_callbacks_for(b)                  # different package
+        assert len(_state.begin_callbacks) == 1
+        _remove_callbacks_for(a)
+        assert len(_state.begin_callbacks) == 0
+
+    def test_timer_callback_disabled_when_loader_removed_empties_list(self):
+        """Removing the last loader's timer callback disables Dragon's COM timer."""
+        from unittest.mock import MagicMock
+        from natlink_compat._callbacks import (
+            setTimerCallback, _remove_callbacks_for, loader_registration)
+        from natlink_compat._state import _state
+
+        class Loader:
+            __module__ = "pkg_t.loader"
+        loader = Loader()
+        _state.backend = MagicMock()  # connected
+        try:
+            with loader_registration(loader):
+                setTimerCallback(lambda: None, 50)
+            _remove_callbacks_for(loader)
+            assert len(_state.timer_callbacks) == 0
+            _state.backend.set_timer_callback.assert_called_with(False)
+        finally:
+            _state.backend = None
