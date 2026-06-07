@@ -646,6 +646,6 @@ class TestCallbackStacking:
                 setTimerCallback(lambda: None, 50)
             _remove_callbacks_for(loader)
             assert len(_state.timer_callbacks) == 0
-            _state.backend.set_timer_callback.assert_called_with(False)
+            _state.backend.set_timer_callback.assert_called_with(False, 0)
         finally:
             _state.backend = None

@@ -249,7 +249,7 @@ class TestDoRestartOnMainAbort(unittest.TestCase):
              patch.object(_launcher, "_connect", return_value=True) as mock_connect, \
              patch.object(_launcher, "_start_monitor_if_needed") as mock_monitor, \
              patch.object(natlink_com, "_dragon", mock_dragon), \
-             patch("natlink_compat._lifecycle._disconnect") as mock_disconnect, \
+             patch("natlink_compat._launcher._disconnect") as mock_disconnect, \
              patch("natlink_compat._state._state", state):
             _launcher._do_restart_on_main(session, natlink)
 

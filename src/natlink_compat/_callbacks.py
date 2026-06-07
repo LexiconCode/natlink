@@ -139,7 +139,7 @@ def dispatch_begin_callback(module_info):
     with _callback_trace("begin"):
         for cb in list(_state.begin_callbacks):
             try:
-                cb(module_info)
+                _entry_fn(cb)(module_info)
             except Exception:
                 log.exception("Error in begin callback")
 
@@ -194,7 +194,7 @@ def dispatch_change_callback(change_type, change_value, change_extra=""):
     with _callback_trace("change"):
         for cb in list(_state.change_callbacks):
             try:
-                cb(change_type, info)
+                _entry_fn(cb)(change_type, info)
             except Exception:
                 log.exception("Error in change callback")
 
@@ -218,7 +218,7 @@ def dispatch_timer_callback():
     with _callback_trace("timer"):
         for cb in list(_state.timer_callbacks):
             try:
-                cb()
+                _entry_fn(cb)()
             except Exception:
                 log.exception("Error in timer callback")
 
@@ -377,15 +377,9 @@ class _CB(NamedTuple):
     any loader context). A package name — not the loader object — because a
     loader may self-register an instance that differs from the module passed
     to start(); the package stays consistent across both.
-
-    Callable so dispatch can invoke entries uniformly (``cb(...)``) whether
-    they are wrapped records or bare callables placed directly on the lists.
     """
     fn: object
     owner: object  # package-name str, or None
-
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
 
 
 def _entry_fn(entry):
@@ -510,13 +504,26 @@ def _remove_callbacks_for(loader):
 
     # If removing this loader emptied the timer list, stop Dragon's COM timer
     # so it doesn't keep firing into an empty dispatch.
-    if had_timer and not _state.timer_callbacks and _state.connected \
-            and _state.backend is not None:
+    if had_timer and not _state.timer_callbacks:
         try:
-            _state.backend.set_timer_callback(False)
+            _apply_com_timer(False)
         except Exception:
             log.debug("Failed to disable COM timer after loader removal",
                       exc_info=True)
+
+
+def _apply_com_timer(enabled, nMilliseconds=0):
+    """Drive Dragon's COM timer to the desired state, guarded on connection.
+
+    The single place that talks to the backend timer; callers decide the
+    state ("any timer callback registered?"). No-op while disconnected, so
+    the timer is (re)applied on connect.
+    """
+    if not _state.connected or _state.backend is None:
+        return
+    from ._helpers import com_call
+    com_call("setTimerCallback", _state.backend.set_timer_callback,
+             enabled, nMilliseconds if enabled else 0)
 
 
 def setBeginCallback(callback):
@@ -558,20 +565,14 @@ def setTimerCallback(pCallback: object, nMilliseconds: int = 50):
         pCallback: A callable or ``None`` to clear.
         nMilliseconds: Timer interval in milliseconds (default 50).
     """
-    from ._helpers import com_call
     _set_callback(_state.timer_callbacks, pCallback, _state.registering_loader)
     # Legacy natlink allowed registration before natConnect. Record the
-    # callback unconditionally; only drive the COM timer when connected.
+    # callback unconditionally; _apply_com_timer no-ops while disconnected.
     if not _state.connected or _state.backend is None:
         log.debug("setTimerCallback recorded while disconnected; "
                   "COM timer not started")
         return
-    com_call(
-        "setTimerCallback",
-        _state.backend.set_timer_callback,
-        pCallback is not None,
-        nMilliseconds if pCallback is not None else 0,
-    )
+    _apply_com_timer(pCallback is not None, nMilliseconds)
 
 
 # --- Engine event handlers (registered into DragonConnection slots) ---

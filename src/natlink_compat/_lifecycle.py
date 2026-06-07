@@ -117,14 +117,6 @@ def _connect_cm():
         natDisconnect()
 
 
-@contextlib.contextmanager
-def _noop_cm():
-    """Handle returned to a re-entrant ``natConnect()`` when the launcher
-    already owns the connection (issue #228). Exiting it does NOT disconnect —
-    the launcher controls the shared connection's lifetime."""
-    yield
-
-
 def _establish_com_connection():
     """Phase A of natConnect: pure COM — mutex, backend, sinks, callbacks.
 
@@ -269,7 +261,7 @@ def natConnect(bUseThreads: bool = False, *, discovered_loaders=None):
             # connection lives until launcher teardown or tray > Inactive.
             log.debug("natConnect: launcher already connected — returning "
                       "no-op handle")
-            return _noop_cm()
+            return contextlib.nullcontext()
         # Standalone caller reconnecting (no launcher): tear down then
         # rebuild, as legacy natlink did.
         log.debug("natConnect: already connected, disconnecting first")

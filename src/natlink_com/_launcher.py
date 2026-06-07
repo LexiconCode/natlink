@@ -237,10 +237,7 @@ def signal_restart():
     Called from the tray menu's worker thread. The actual restart
     runs on the main thread which owns the COM objects.
     """
-    h = kernel32.OpenEventW(_EVENT_MODIFY_STATE, False, _RESTART_EVENT_NAME)
-    if h:
-        kernel32.SetEvent(h)
-        kernel32.CloseHandle(h)
+    if _signal_named_event(_RESTART_EVENT_NAME):
         log.info("Restart event signaled")
         return True
     log.warning("Could not open restart event — launcher not running?")
@@ -299,11 +296,8 @@ def request_shutdown(timeout_ms=5000):
     callers, the launcher exited within timeout_ms).
     Returns False if no launcher is running.
     """
-    h = kernel32.OpenEventW(_EVENT_MODIFY_STATE, False, _SHUTDOWN_EVENT_NAME)
-    if not h:
+    if not _signal_named_event(_SHUTDOWN_EVENT_NAME):
         return False
-    kernel32.SetEvent(h)
-    kernel32.CloseHandle(h)
 
     # If called from inside the launcher process (tray Exit menu),
     # don't poll — the main loop handles cleanup after we return.

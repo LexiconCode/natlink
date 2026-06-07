@@ -23,6 +23,9 @@ from natlink_com._launcher import (
 )
 from natlink_com._win32 import kernel32
 
+from ._lifecycle import _disconnect  # real teardown; public natDisconnect
+                                     # no-ops while the launcher is active
+
 log = logging.getLogger("natlink.compat.launcher")
 
 ole32 = ctypes.windll.ole32
@@ -231,8 +234,7 @@ def _do_restart_on_main(launcher, natlink):
 
         if _state.connected:
             try:
-                from ._lifecycle import _disconnect
-                _disconnect()  # real teardown (public natDisconnect no-ops while launcher-active)
+                _disconnect()
             except Exception:
                 log.debug("Restart: disconnect error", exc_info=True)
 
@@ -276,8 +278,7 @@ def _handle_dragon_exited(launcher, natlink):
     will signal dragon_reappeared if Dragon comes back."""
     if launcher.connected:
         try:
-            from ._lifecycle import _disconnect
-            _disconnect()  # real teardown (public natDisconnect no-ops while launcher-active)
+            _disconnect()
         except Exception:
             log.debug("Disconnect error", exc_info=True)
     gc.collect()
@@ -335,8 +336,7 @@ def _do_deactivate_on_main(launcher, natlink):
         _dragon.save_profile(conn)
     if _state.connected:
         try:
-            from ._lifecycle import _disconnect
-            _disconnect()  # real teardown — releases the connection mutex
+            _disconnect()  # releases the connection mutex
         except Exception:
             log.debug("Deactivate: disconnect error", exc_info=True)
     gc.collect()
@@ -432,7 +432,6 @@ def _teardown(launcher, natlink):
     """Clean disconnect, stop UI provider, close event handles."""
     from ._state import _state
     from ._actions import stop_provider
-    from ._lifecycle import _disconnect
 
     launcher.stop_monitor()
 

@@ -544,15 +544,14 @@ class DragonConnection:
 
         pump()
         deadline = time.monotonic() + _BUDGET_S
-        while (_sink_com_refcount(self._engine_sink)
-               or _sink_com_refcount(self._action_sink)):
+        while True:
+            eng = _sink_com_refcount(self._engine_sink)
+            act = _sink_com_refcount(self._action_sink)
+            if not (eng or act):
+                break
             if time.monotonic() >= deadline:
-                log.debug(
-                    "disconnect: sink Release drain timed out "
-                    "(engine=%d, action=%d refs remaining)",
-                    _sink_com_refcount(self._engine_sink),
-                    _sink_com_refcount(self._action_sink),
-                )
+                log.debug("disconnect: sink Release drain timed out "
+                          "(engine=%d, action=%d refs remaining)", eng, act)
                 break
             # Block up to a slice for the next incoming Release RPC (or wake
             # early when one arrives), then dispatch it.
