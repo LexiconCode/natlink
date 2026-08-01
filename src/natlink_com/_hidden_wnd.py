@@ -49,8 +49,12 @@ log_drain  = logging.getLogger("natlink.com.sta.drain")
 log_health = logging.getLogger("natlink.com.sta.health")
 log_error  = logging.getLogger("natlink.com.sta.error")
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# Private instances, not ctypes.windll.*: use_last_error is required for
+# ctypes.get_last_error() below to report anything, and keeping our own
+# instance means the argtypes set here cannot be clobbered by — or silently
+# depended on by — another module sharing the process-wide windll cache.
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 LRESULT = ctypes.c_longlong
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, ctypes.c_uint,

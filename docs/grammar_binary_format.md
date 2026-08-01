@@ -429,9 +429,16 @@ UI.  Not required for programmatic grammar loading.
 
 ### DGNSRCKCFG_LISTS (0x1016) — Serialized List Words
 
-Pre-populates dynamic lists with words at grammar load time, eliminating the
-need to call `ListAppend()` after load.  The chunk contains one or more
-entries:
+> **Do not emit this chunk.** Validated 2026-02-16 against Dragon 13: a grammar
+> containing 0x1016 hangs COM indefinitely inside `GrammarLoad` and then kills
+> the `natspeak.exe` process. Unlike 0x1014, which fails cleanly with an error,
+> this is destructive. Dragon extension chunks are not accepted via programmatic
+> loading — populate lists with `ListAppend()` after load instead. The
+> regression test is permanently skipped for this reason
+> (`tests/test_grammar_format.py::test_14g_dgnsrckcfg_lists`).
+
+The layout below is recorded for completeness — for reading grammars produced
+elsewhere, not for generating them.  The chunk contains one or more entries:
 
 ```
 Offset  Size   Field       Description
