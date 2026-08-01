@@ -1,0 +1,282 @@
+# Gap Analysis vs Reference (2026-07-31)
+
+Four-domain comparison of this rewrite against `Reference/natlink-master/NatlinkSource` (C++),
+`Reference/natlinkcore`, and the major consumers (dragonfly, Vocola2, unimacro, Caster).
+
+**Verification status.** Every P0 claim below was independently re-verified with offline repros
+(see "Verification round 2"). All 9 audited claims CONFIRMED, none refuted; the `error_type`
+defect is *larger* than first reported (22 of 35 sites wrong, not ~19). The grammar compiler was
+additionally differential-fuzzed against the reference `gramparser` over 343 cases — the binary
+emitter is byte-perfect, but the *parser's* accept/reject behavior diverges (new findings, §P0-9
+and §P1-18). One claim (P0-1, choice-0 rule numbers) requires live Dragon and is still pending.
+
+**Overall verdict:** the architecture is sound and coverage is nearly complete. All 36 C++
+module-level functions exist, all 13 exception classes exist, the binary grammar format is
+byte-compatible with `gramparser.packGrammar`, the hard pause/resume machinery is faithfully
+ported, and hosting the reference `natlinkcore.loader` as a plugin preserves its reload/error
+isolation semantics. Only **one symbol is missing outright** across the entire consumer sweep
+(`setTrayIcon`). The real gaps cluster in four themes:
+
+1. **Exception fidelity** — wrong `error_type` codes and bare `NatError` where C++ raised
+   specific subclasses; consumers catch specific classes.
+2. **Single-slot → multi-slot callback translation** — `None`-clears-all and teardown paths
+   break loader coexistence.
+3. **Result-object semantics** — swallowed `OutOfRange`, and choice-0 rule numbers sourced
+   from `dwWordNum` instead of `dwCFGParse`.
+4. **Legacy strings/affordances** consumers depend on (dragonfly string-matches error text).
+
+---
+
+## P0 — breaks real consumers at runtime
+
+| # | Gap | Where | Impact |
+|---|-----|-------|--------|
+| 1 | **CONFIRMED ON LIVE DRAGON — choice-0 "rule numbers" are word IDs, not rule numbers.** We return `SRWORDW.dwWordNum` where C++ returns `dwCFGParse` from the results graph (`ResultObject.cpp:193-199`). | `natlink_com/_grammar_sink.py:94`, `_res_obj.py:106-107,471-487` | **Every rule-based callback is broken.** See the measurement below. Fix = route choice 0 through `BestPathWord`/`GetWordNode` like choice>0. |
+| 2 | **`setTrayIcon` missing entirely** (C++: `DragonCode.cpp:3575-3703`). | nowhere in `src/` | `AttributeError` in unimacro `_repeat` repeating mode, tray-icon grammars, natlinkcore `_mouse` sample. Stub in `_legacy.py` removes the crash; real impl goes through the UI provider. |
+| 3 | **Compat ResObj swallows errors** — `getResults`/`getWords`/`getWordInfo` catch and return `None` instead of raising `OutOfRange`/`NatError`. | `natlink_compat/_res_obj.py:28-68` | The ubiquitous `while 1: ... except natlink.OutOfRange: break` idiom (unimacro `_oops`, samples) gets `None` → TypeError downstream. `error_type=6` mapping already exists. |
+| 4 | **Systematic wrong `error_type` codes** → wrong exception classes. ~19 raise sites across `_gram_obj.py` (166,170,254,259,264,287,409), `_dict_obj.py` (102,136), `_res_obj.py` (118,151,248,291,296,301), `_user_ops.py` (113,159,163,167,187), `_lexicon.py` (422,446). | natlink_com | e.g. bad grammar → OutOfRange instead of **BadGrammar** (natlinkutils catches BadGrammar on load); existing user → SyntaxError instead of **UserExists**; invalid word → BadWindow instead of **InvalidWord**; VALUEOUTOFRANGE → BadGrammar instead of **OutOfRange**. Mechanical sweep against `Exceptions.h:14-33`. |
+| 5 | **`setBeginCallback(None)` (and Change/Timer) clears ALL loaders' callbacks.** | `natlink_compat/_callbacks.py:439-445` | dragonfly `disconnect()` or natlinkcore `finish()` or NatlinkTimer's `setTimerCallback(None,0)` silently kills every other loader's dispatch. Scope clears to the owning loader. |
+| 6 | **Disabling/removing a loader doesn't stick** — `remove_loader` never calls `_remove_callbacks_for`; NatlinkMain's `finish()` never invoked. | `natlink_compat/_loaders.py:287-289,324-332` | Tray "toggle natlinkcore off" → next utterance's still-registered begin callback reloads everything. Also leaks sys.path entries (`loader.py:557/572`). |
+| 7 | **`natlinkstatus` crashes on missing `HKLM\Software\Natlink` registry key** — nothing in this repo writes it. | reference `loader.py:633-637` expectation | `getDNSVersion`/`getNatlinkStatusDict` → uncaught `FileNotFoundError`; hits unimacro `_control` status and Vocola immediately. Provision at `natlink-ui install`, or shim. |
+| 8 | **`natlink.active_loader = None` registers a None loader** — module `__setattr__` intercept has no None guard. | `src/natlink/__init__.py:24-30`, `_loaders.py:392-402` | natlinkcore `finish()` pollutes registry; `get_loaders()` returns `[None]`. Also `active_loader` **getter** returns `loaders[0]` regardless of owner. Repro confirmed: registry becomes `[_LoaderEntry(loader=None, name='NoneType')]`. |
+| 9 | **Our parser rejects non-ASCII bare words** — ASCII-only `WORD`/`NAME` terminals. Reference uses `str.isalpha()`, so any Unicode letter works bare. | `natlink_com/_grammar_parser.py:39-40` | `<r> exported = démo;` → `GrammarError: No terminal defined for 'é'`. **Breaks 5 shipped sample macros** (natlinkcore `_samplehypothesis.py`, `_sample1/2/3/5.py`). Found by differential fuzzing; quoted `"café"` works on both sides. |
+| 10 | **No `checkForErrors` equivalent anywhere in `src/`** — natlinkutils always runs doParse + checkForErrors + packGrammar. | `natlink_com/grammar_compiler.py` | We silently compile grammars with **undefined rule references** (emitting dangling rule IDs to Dragon) and with no exported rules. Callers migrating to `compile_grammar` lose the whole validation layer. |
+
+## P1 — behavioral divergences with clear consumer impact
+
+| # | Gap | Where | Impact |
+|---|-----|-------|--------|
+| 9 | **Legacy error strings** — dragonfly string-matches `"Calling GramObj.load is not allowed before calling natConnect"` (engine.py:232) and the playEvents variant to trigger auto-connect fallbacks. | `natlink_compat/_gram_obj.py:48`, `_helpers.py:10` | Emit per-function `"Calling {name} is not allowed before calling natConnect"` to restore fallbacks. |
+| 10 | **`waitForSpeech` negative timeout hangs forever** — deadline only computed `if timeout_ms > 0`; C++ auto-closed after \|timeout\| ms. Also no dialog at all (standalone dfly-loader loses its exit affordance), and silent return when disconnected (C++ raised). | `natlink_compat/_lifecycle.py:403-435` | Fix deadline; document/replace dialog. |
+| 11 | **`playString` flags dropped on DNS13/Win10 SendInput path** — shift/ctrl/upper flags never reach `send_dragon_keys`. C++ always forwarded flags (`DragonCode.cpp:2023-2042`). | `natlink_com/_speech_ops.py:180-186` | Grammars using `playString(s, flags)` get unmodified keys on the primary supported config. |
+| 12 | **execScript syntax errors raise bare `NatError`**, not `natlink.SyntaxError` (C++ `DragonCode.cpp:2425-2428`; our own docstring promises SyntaxError). Same class of gap: training WrongState/ValueError sites, setMicState ValueError, getWordInfo flags ValueError, inputFromFile ValueError. | `natlink_com/_speech_ops.py:271-274`, `_user_ops.py:331-375`, `_com_bridge.py:131`, `_lexicon.py:277-279`, `natlink_compat/_system.py:154-161` | Vocola/dragonfly catch `natlink.SyntaxError` around execScript. |
+| 13 | **print redirect requires natlinkcore installed** — `_logging_setup.py:349-354` imports `natlinkcore.redirect_output`; in-repo `natlink_ui/_stream_redirect.py:87` is dead code (no callers). | natlink_compat / natlink_ui | dragonfly-only installs: grammar `print()` never reaches the messages window. |
+| 13b | **`natConnect` breaks `sys.stdout`/`sys.stderr.fileno()` process-wide** (measured). natlinkcore's `NewStdout`/`NewStderr.fileno()` raises `NotImplementedError` (`redirect_output.py:28`), and we install them on connect — **even when `discovered_loaders=[]`**. | same | Before connect `sys.stderr.fileno()` → `2`; after, it raises. Breaks `subprocess(..., stderr=sys.stderr)`, `logging` handlers wanting an fd, and any C-level consumer. **Currently causes 192 errors in our own test suite** once a live connection succeeds. Using the in-repo `_stream_redirect` (P1-13) would let us implement `fileno()` properly. |
+| 14 | **Two different files named `natlink.ini`** — ours `%LOCALAPPDATA%\natlink\natlink.ini` (`NATLINK_SETTINGS_DIR`); natlinkcore's `~/.natlink/natlink.ini` (`NATLINK_SETTINGSDIR`, no underscore). Our `save_config` strips comments if pointed at theirs. | `natlink_com/_config.py:17-21` vs reference `config.py:229-250` | High confusion for existing users; consider renaming ours or unifying. |
+| 15 | **Shared COM timer interval** — multi-owner timer list, last-set `nMilliseconds` wins for all loaders. | `natlink_compat/_callbacks.py:568-575` | Two loaders with different intervals fight. |
+| 16 | **ResObj from `DictObj.getResultsObject` returns `[]` for choice 0** — created without words, cached-words fast path short-circuits before graph query. | `natlink_com/_dict_obj.py:377`, `_res_obj.py:106-107` | Fall through to `BestPathWord` when `_words` empty. |
+| 17 | **`_HRESULT_MAP` values mostly wrong** vs speech.h (GRAMMARERROR, VALUEOUTOFRANGE, SPEAKEREXISTS, nonexistent 0x80040032) and effectively dead — `NatlinkCOMError.error_type` defaults 0, so `_raise_for_com_error` never consults it. | `natlink_compat/_exceptions.py:70-129` | Fix values, default `error_type=None`. |
+
+## P2 — lower priority / polish
+
+- **`ConnectionInUse` not exported** from `natlink_compat.__init__` (`_exceptions.py:33`) — only catchable as NatError.
+- **No callable-type validation** on callback setters (C++ raised TypeError; `pythwrap.cpp:325-329`).
+- **Attrib-change events during init dropped** instead of deferred-and-replayed (`_callbacks.py:582-583`; mitigated by `_cache_initial_state`). Nested-callback deferral itself is faithful.
+- **Begin callbacks skipped when `getCurrentModule` fails** — C++ substituted `("","",0)` and still fired (`DragonCode.cpp:793-796` vs `_callbacks.py:644`).
+- **MimicDone diagnostic text lost** — C++ extracted IDgnError text; ours raises fixed message (`_engine_sink.py:187-202`).
+- **Missing NOTDURING guards** — natConnect/natDisconnect callable from inside a paused callback (C++ refused; `DragonCode.cpp:1685,1862`).
+- **inputFromFile playlist parsed then silently dropped** (`_speech_ops.py:347-351`); missing-file raises NatError not ValueError.
+- **`GramObj.load` on already-loaded grammar silently reloads** (C++ hard-errored, `GrammarObject.cpp:224-229`); str decoded latin-1 vs C++ UTF-8.
+- **`DictObj()` lazy construction** — succeeds while disconnected (C++ raised in ctor).
+- **Results callback fired with `[]`** when word extraction fails (C++ skipped callback entirely).
+- **Sink always wraps/defers result objects** even with no results callback (C++ skipped; perf, extra cross-process traffic).
+- **natlinkcore can refuse to start yet register as running** (`loader.py:542-554` bails after setting `active_loader`); tray shows running with zero grammars.
+- **Logger clobber hazard** if `natlinkstatus` imported before `loader.run()` (`setup_logger` strips handlers).
+- **`ensure_natlinkcore_logging`** exported and documented but never called.
+- **displayText `logText` arg** (Dragon-log copy) not implemented.
+- **getCursorPos OSError** surfaces as misleading "connection lost" NatError (`_exceptions.py:163-164`).
+- **natlinkcore log_level=DEBUG** won't show DEBUG in window (UI handler pinned at INFO, `_loaders.py:217`).
+
+---
+
+## Verification round 3 — LIVE ON DRAGON (P0-1 resolved)
+
+Probe: `tests/manual_probe_cfgparse.py`. Grammar with two exported rules, `now` shared by both:
+
+```
+<ruleOne> exported = hello world now;
+<ruleTwo> exported = goodbye now;
+```
+
+| Mimic | What callbacks deliver (ours) | Real `dwCFGParse` (graph) |
+|---|---|---|
+| "hello world now" (ruleOne) | hello→**1**, world→**2**, now→**3** | hello→**1**, world→**1**, now→**1** |
+| "goodbye now" (ruleTwo) | goodbye→**4**, now→**3** | goodbye→**2**, now→**2** |
+
+**The graph is self-consistent and correct:** every word matched by ruleOne carries 1, every word
+matched by ruleTwo carries 2 — that is what a CFG parse/rule number means.
+
+**Ours is a word table index.** The clincher is the shared word: `now` reports **3 in both
+mimics**, even though it matched a different rule each time. A rule number cannot be invariant
+across two different rules. The values 1/2/3/4 are simply `hello`/`world`/`now`/`goodbye` in
+grammar word order.
+
+Confirmed end-to-end — the raw callback payload dragonfly and `natlinkutils.GrammarBase`
+receive was `[('goodbye', 4), ('now', 3)]`. `ruleMap` decoding, `gotResults_<rule>` dispatch, and
+dragonfly's rule decoding all consume these numbers, so rule-based grammars dispatch on garbage.
+Severity upgraded from "needs verification" to **confirmed P0**.
+
+### Other P0/P1 claims confirmed live in the same run
+
+- **P0-3**: `compat getResults(50)` → `None` (C++ raised `OutOfRange`); underlying
+  `NatlinkCOMError` carried `error_type=3` (BadGrammar) instead of 6. Both halves confirmed live.
+- **P1-12**: `execScript("...(((")` → bare `NatError`, not `natlink.SyntaxError`.
+- **§2.3**: `activate(rule, 0x00DEAD00)` → bare `NatError`, not `BadWindow`.
+- Cosmetic: both errors above report `HRESULT 0x00000000` — a success code printed in an error
+  message, because these raise sites pass no `hr`.
+
+## The connection defect that blocked all live testing (fixed)
+
+Live verification was blocked for hours by `CoCreateInstance(DgnSite)` failing with
+`0x80080005`; the project's own `tests/test_minimal.py` failed identically, so this was not
+probe-specific. Root cause and fix, both in `natlink_com/_connection.py`:
+
+1. **Missing `CLSCTX_ACTIVATE_32_BIT_SERVER`.** Dragon is a 32-bit `LocalServer32`. The 64-bit
+   registry view holds an `AppID` for DgnSite with an empty `DllSurrogate` (natlink's historical
+   `dgnSiteSurrogate` registration — cf. `Reference/natlink-master/NatlinkSource/dgnSiteSurrogate.rgs`);
+   the clean registration lives only in the 32-bit view. A 64-bit client using plain
+   `CLSCTX_LOCAL_SERVER` resolves to the 64-bit entry, COM tries to launch a server that cannot
+   exist, and activation fails with `CO_E_SERVER_EXEC_FAILURE` — spawning a stray `natspeak.exe`
+   on every attempt. Measured directly: `LOCAL_SERVER` → `CO_E_SERVER_EXEC_FAILURE`,
+   `LOCAL_SERVER|ACTIVATE_32_BIT_SERVER` → **S_OK**, `…|ACTIVATE_64_BIT_SERVER` →
+   `REGDB_E_CLASSNOTREG`. This is machine-state dependent, which is why it appears intermittently.
+2. **Both COM HRESULT constants were wrong** (same mis-transcription pattern as the `error_type`
+   cluster). Per `winerror.h`: `CO_E_BAD_PATH=0x80080004`, `CO_E_SERVER_EXEC_FAILURE=0x80080005`,
+   `CO_E_OBJSRV_RPC_FAILURE=0x80080006`. We had `_CO_E_OBJSRV_RPC_FAILURE=0x80080005` and
+   `_CO_E_SERVER_EXEC_FAILURE=0x80080004`, so the retry loop retried on
+   `CO_E_SERVER_EXEC_FAILURE` and would **never** retry the genuinely transient
+   `CO_E_OBJSRV_RPC_FAILURE` that Joel Gould's comment (`DragonCode.cpp:1518`) exists to work
+   around. It also mislabeled every failure in the logs.
+
+After the fix: `tests/test_minimal.py` → **13 passed**; `test_grammar.py` + `test_mimic.py` →
+**32 passed**; full suite → **472 passed**. The remaining 192 suite errors are all the
+`fileno()` defect in §P1-13b, not connection failures — they only became reachable now that
+live tests actually connect.
+
+---
+
+## Verification round 2 — adversarial re-check + differential fuzzing
+
+### Adversarial verification of the P0 claims
+
+Nine claims re-derived independently from source with offline repros. **All CONFIRMED, none
+refuted, no severity overstated.** Corrections to the first-round report:
+
+- **The `error_type` defect is bigger than reported: 22 of 35 raise sites map to the wrong
+  exception class** (13 correct). The complete audited table lives below. Notably the Python
+  comments at each site *cite the correct C++ class* (e.g. `_dict_obj.py:101` says "C++:
+  errBadWindow" then passes `10`=ValueError) — intent was right, the numbers were
+  mis-transcribed individually. No single alternative enum explains them.
+- `active_loader` getter returning `loaders[0]` is technically true but *observably* returns
+  `None` after natlinkcore's `finish()`, so the read-back is coincidentally correct; the real
+  damage is the phantom `NoneType` entry visible to `get_loaders()` and the UI.
+- `_HRESULT_MAP` is worse than reported: beyond the three known-bad values, SRERR_INVALIDRULE,
+  SRERR_INVALIDWINDOW, SRERR_INVALIDINTERFACE and SRERR_GRAMMARTOOCOMPLEX are all wrong, and
+  `SRERR_INVALIDWORD 0x80040032` doesn't exist in speech.h. Only SRERR_INVALIDLIST, E_INVALIDARG
+  and E_FAIL are right. **`natlink_com/_speech_constants.py:116-156` already has every correct
+  value** — `_exceptions.py` simply doesn't use it.
+
+#### Complete error_type audit (22 wrong of 35)
+
+| Our site | Condition | Ours | C++ | 
+|---|---|---|---|
+| `_dict_obj.py:102` | activate: bad hwnd | ValueError | **BadWindow** |
+| `_dict_obj.py:136` | setLock: not locked | UserExists | **WrongState** |
+| `_gram_obj.py:166` | load: INVALIDCHAR | BadWindow | **InvalidWord** |
+| `_gram_obj.py:170` | load: GRAMMARERROR | OutOfRange | **BadGrammar** |
+| `_gram_obj.py:254` | activate: INVALIDRULE | ValueError | **UnknownName** |
+| `_gram_obj.py:259` | activate: GRAMMARTOOCOMPLEX | OutOfRange | **BadGrammar** |
+| `_gram_obj.py:264` | activate: RULEALREADYACTIVE | UserExists | **WrongState** |
+| `_gram_obj.py:287` | deactivate: RULENOTACTIVE | UserExists | **WrongState** |
+| `_gram_obj.py:409` | appendList: INVALIDCHAR | BadWindow | **InvalidWord** |
+| `_lexicon.py:422` | addWord: INVALIDTEXTCHAR | BadWindow | **InvalidWord** |
+| `_lexicon.py:446` | deleteWord: INVALIDTEXTCHAR | BadWindow | **InvalidWord** |
+| `_lexicon.py:618` | getWordProns: INVALIDTEXTCHAR | BadWindow | **InvalidWord** |
+| `_res_obj.py:118` | getResults: VALUEOUTOFRANGE | BadGrammar | **OutOfRange** |
+| `_res_obj.py:151` | getWordInfo: VALUEOUTOFRANGE | BadGrammar | **OutOfRange** |
+| `_res_obj.py:248` | correction: INVALIDCHAR | BadWindow | **InvalidWord** |
+| `_res_obj.py:291` | getSelectInfo: VALUEOUTOFRANGE | BadGrammar | **OutOfRange** |
+| `_res_obj.py:296` | getSelectInfo: NOTASELECTGRAMMAR | UserExists | **WrongType** |
+| `_res_obj.py:301` | getSelectInfo: DOESNOTMATCHGRAMMAR | UserExists | **BadGrammar** |
+| `_user_ops.py:113` | selectUser: E_INVALIDARG | BadWindow | **InvalidWord** |
+| `_user_ops.py:159` | createUser: E_INVALIDARG | BadWindow | **InvalidWord** |
+| `_user_ops.py:163` | createUser: SPEAKEREXISTS | SyntaxError | **UserExists** |
+| `_user_ops.py:167,187` | createUser: base model/topic | BadGrammar | **OutOfRange** |
+
+Correct already: `_gram_obj.py:379,388,400,413,478,492`; `_lexicon.py:250,451,485`;
+`_res_obj.py:206`; `_speech_ops.py:143`; `_user_ops.py:105`.
+
+### Differential fuzzing: grammar compiler vs reference gramparser
+
+343 cases — 46 hand-written (every construct), 26 invalid, 12 lexical probes, 59 real-world
+gramSpecs AST-extracted from unimacro/natlinkcore/Vocola2, 200 random (seed 20260731).
+
+**The binary emitter is perfect: 300/300 mutually-accepted cases byte-identical.** Chunk order,
+ID allocation order, dword padding, cp1252 encoding, symbol streams — all match, including
+é/ü padding, 60-rule ID ordering, shared words across rules, and `exported` used as a word.
+Error parity holds on 23 invalid grammars.
+
+All divergence is at the **acceptance layer**:
+
+| Divergence | Who's wrong | Impact |
+|---|---|---|
+| Non-ASCII bare words rejected by ours | **Ours** (vs reference *and* our own docs) | P0-9 above — breaks 5 shipped macros |
+| Empty quoted word `""` accepted by ours | **Ours** — emits a nameless word entry | Dragon receives a word with an all-padding name |
+| `a++` accepted (nested repeat), duplicate imports accepted, multi-line quoted words accepted | Ours (permissive) | Bytes still well-formed; grammars that build here won't load on stock natlinkcore |
+| Bare `-` `_` `'` `\` in words: reference rejects, ours accepts | **Reference** deviates from its own docstring for `-`/`_`; ours exceeds both for `'`/`\` | Portability asymmetry — policy decision |
+| No `checkForErrors` layer | **Ours** | P0-10 above |
+
+---
+
+## Verified-faithful (no action)
+
+- Pause/resume engine semantics end-to-end: JIT-paused deferral, `pause_recog` increment on
+  PhraseFinish post, deferred-cookie processing, ExecutionStatus unpause, mimic's up-front
+  `resetPauseRecog`, Resume-always-in-finally, `during_paused` guards, timer skip at depth>0,
+  sink flags.
+- Callback ordering: global begin → trigger_load → per-grammar `gotBegin` in the same
+  utterance; change-callback deferral inside callbacks with pending replay.
+- Binary grammar format byte-compatible with `gramparser.packGrammar` (chunk order, padding,
+  SELECT/dictation headers, the intentional dwSize bug reproduction).
+- Select-and-say trio (`setSelectText`/`getSelectText`/`getSelectInfo`) complete; grammar-GUID
+  plumbing equivalent to C++ pointer identity.
+- Dictation lock nesting, `computeRange` slice semantics, TextChanged arg tuples.
+- Result-object lifetime tracking and pre-disconnect release.
+- All dragonfly/Vocola/Caster module-level calls present and signature-compatible.
+
+## Deliberate divergences to keep documented
+
+Launcher-owned connection with no-op natConnect/natDisconnect + `ConnectionInUse` mutex
+(issue #228) — dragonfly standalone `engine.connect()` conflicts with a running launcher;
+multi-loader registry replacing the NatlinkMain singleton; UIProvider replacing
+`setMessageWindow`'s second-thread window; SendInput bypass of Dragon's journal hooks;
+timeouts on all sync ops; getWave→bytes; getWordInfo pronunciation fallback (ILexPronounceW
+marshaling break); mimic retry-on-paused-race; extra vocabulary enumeration APIs.
+
+## Suggested fix order
+
+1. **`error_type` sweep** — 22 known-wrong sites, table above, each a one-token change. Highest
+   value per unit of risk; drive it off `_speech_constants.py`, which already has correct values.
+   Fold in the `_HRESULT_MAP` rewrite and `NatlinkCOMError.error_type` default → `None`.
+2. **Unicode bare words in the parser** (P0-9) — breaks shipped sample macros today, and the fuzz
+   harness gives an immediate regression check. Add `checkForErrors` equivalent (P0-10) alongside.
+3. **Compat ResObj**: raise instead of returning `None` (P0-3); graph fallback for empty `_words` (P1-16).
+4. **Callback ownership**: scope `None`-clears to owner (P0-5); fix `remove_loader` teardown incl.
+   `finish()` (P0-6); None-guard the `active_loader` setter + owner-aware getter (P0-8).
+5. **`setTrayIcon`** stub → UI-provider impl (P0-2); legacy error strings (P1-9).
+6. Registry key provisioning for natlinkstatus (P0-7); `waitForSpeech` deadline (P1-10);
+   playString flags on SendInput path (P1-11); wire up `_stream_redirect` (P1-13).
+7. **Live-verify P0-1** (choice-0 `dwWordNum` vs `dwCFGParse`) — still outstanding; needs a
+   working Dragon COM connection. Probe script exists and is ready to run.
+
+## Still-open investigation threads
+
+- **P0-1 live verification — BLOCKED on environment, not on the probe.** The probe is written and
+  ready (compares cached `SRPHRASEW.dwWordNum` against `BestPathWord`/`GetWordNode` →
+  `dwCFGParse` on the same result object across two distinct exported rules, via two mimics).
+  Every `CoCreateInstance(DgnSite)` on this machine currently fails with **0x80080005
+  CO_E_SERVER_EXEC_FAILURE**, including `pytest tests/test_minimal.py` — so it is not specific to
+  the probe. Dragon itself is healthy (profile loaded, DragonBar in Normal mode); its log shows
+  our activation arriving as `(Anti-elevation) Delegating COM activation from IL=2 PID=…` with no
+  matching `Activation has been successfully delegated` line.
+  Hypotheses tested and **refuted**: modal wizard blocking the server (dismissed, no change);
+  multiple stale Dragon instances (cleaned to a single pid, no change); detached-subprocess launch
+  context (relaunched via shell `Start-Process`, no change). Note that each failed activation
+  attempt spawns another `natspeak.exe` stub, so repeated retries accumulate zombie processes —
+  clean them up before re-testing. Next candidates: DCOM/marshal registration state for the
+  64-bit client, or a machine reboot.
+- **Out-of-process robustness audit** (Dragon dying mid-COM-call, STA reentrancy/deadlock,
+  refcount leaks on crash paths, reconnect races, SDATA lifetime) — not yet performed. This is
+  the failure class the in-process C++ original never had, so the reference offers no guidance.
+- **Unswept consumers** — voicecode, re-tools, dragonfly-scripts; plus usage counts for
+  `playString` flags and the `except OutOfRange` idiom to firm up P1-11/P0-3 severity.

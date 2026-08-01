@@ -27,9 +27,17 @@ ole32.CoCreateInstance.restype = c_long
 
 CLSCTX_LOCAL_SERVER = 0x4
 
-# COM HRESULT codes for CoCreateInstance error handling.
-_CO_E_OBJSRV_RPC_FAILURE = 0x80080005
-_CO_E_SERVER_EXEC_FAILURE = 0x80080004
+# Dragon is a 32-bit LocalServer32.  A 64-bit client must request the 32-bit
+# registration explicitly: where a 64-bit-view CLSID entry for DgnSite exists
+# (natlink's historical dgnSiteSurrogate registration leaves an AppID with an
+# empty DllSurrogate), plain CLSCTX_LOCAL_SERVER resolves to that entry and
+# activation fails with CO_E_SERVER_EXEC_FAILURE instead of binding to the
+# running Dragon.
+CLSCTX_ACTIVATE_32_BIT_SERVER = 0x40000
+
+# COM HRESULT codes for CoCreateInstance error handling (winerror.h).
+_CO_E_SERVER_EXEC_FAILURE = 0x80080005
+_CO_E_OBJSRV_RPC_FAILURE = 0x80080006
 _REGDB_E_CLASSNOTREG = 0x80040154
 
 # Marshal registration persists for the process lifetime — never revoked.
@@ -207,7 +215,8 @@ class DragonConnection:
         last_hr = 0
         for attempt in range(3):
             hr = ole32.CoCreateInstance(
-                byref(CLSID_DgnSite), None, CLSCTX_LOCAL_SERVER,
+                byref(CLSID_DgnSite), None,
+                CLSCTX_LOCAL_SERVER | CLSCTX_ACTIVATE_32_BIT_SERVER,
                 byref(IID_IUnknown), byref(ppv)
             )
             last_hr = hr & 0xFFFFFFFF
