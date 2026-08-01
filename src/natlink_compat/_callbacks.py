@@ -87,7 +87,7 @@ def _slot_handlers():
         "on_phrase_hypothesis": dispatch_phrase_hypothesis,
         "on_dict_text_changed": dispatch_dict_text_changed,
         "on_dict_begin": dispatch_dict_begin_callback,
-        "lookup_grammar": _lookup_grammar,
+        "lookup_com_grammar": _lookup_com_grammar,
     }
 
 
@@ -123,10 +123,17 @@ def unregister_all():
     conn._clear_callback_slots()
 
 
-def _lookup_grammar(gram_handle):
-    """Look up a grammar wrapper by handle (used by ComResObj.get_select_info)."""
+def _lookup_com_grammar(gram_handle):
+    """Return the ComGramObj for a handle, or None (for ComResObj.get_select_info).
+
+    grammar_registry stores compat GramObj wrappers — they own the public API
+    and the object lifetime. natlink_com only ever needs the COM object, so the
+    unwrap happens here rather than letting the COM layer reach through a
+    compat-private attribute.
+    """
     with _state.lock:
-        return _state.grammar_registry.get(gram_handle)
+        gram = _state.grammar_registry.get(gram_handle)
+    return gram._com_gram if gram is not None else None
 
 
 # --- Callback dispatch functions (called by COM sinks) ---

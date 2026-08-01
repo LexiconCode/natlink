@@ -5,7 +5,11 @@ import logging
 from typing import List, Optional, Tuple
 
 from ._com_helpers import cotaskmem_free
-from ._errors import NatlinkCOMError
+from ._errors import (NatlinkCOMError,
+                      ERR_INVALID_WORD,
+                      ERR_OUT_OF_RANGE,
+                      ERR_UNKNOWN_NAME,
+                      ERR_USER_EXISTS)
 
 log = logging.getLogger("natlink.com")
 
@@ -102,7 +106,7 @@ def select_user(conn, user: str) -> None:
     all_users = get_all_users(conn)
     if user not in all_users:
         # C++: errUnknownName, "The user named '%s' does not exist"
-        raise NatlinkCOMError("select_user", error_type=2,
+        raise NatlinkCOMError("select_user", error_type=ERR_UNKNOWN_NAME,
                               error_message=f"The user named '{user}' does not exist")
     try:
         sp.Select(user, 0)  # bLock=FALSE
@@ -110,7 +114,7 @@ def select_user(conn, user: str) -> None:
         hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
         if hr == _E_INVALIDARG:
             # C++: "The user name '%s' is invalid"
-            raise NatlinkCOMError("select_user", error_type=8,
+            raise NatlinkCOMError("select_user", error_type=ERR_INVALID_WORD,
                 error_message=f"The user name '{user}' is invalid") from exc
         raise
     log.info("→ Select user: %s", user)
@@ -156,15 +160,15 @@ def create_user(conn, name: str, model: str = "", topic: str = "") -> None:
         hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
         if hr == _E_INVALIDARG:
             # C++: "The user name '%s' is invalid"
-            raise NatlinkCOMError("create_user", error_type=8,
+            raise NatlinkCOMError("create_user", error_type=ERR_INVALID_WORD,
                 error_message=f"The user name '{name}' is invalid") from exc
         if hr == _SRERR_SPEAKEREXISTS:
             # C++: "A user names '%s' already exists" (sic — typo in original)
-            raise NatlinkCOMError("create_user", error_type=9,
+            raise NatlinkCOMError("create_user", error_type=ERR_USER_EXISTS,
                 error_message=f"A user named '{name}' already exists") from exc
         if hr == _E_UNEXPECTED:
             # C++: "The base model '%s' does not exist"
-            raise NatlinkCOMError("create_user", error_type=3,
+            raise NatlinkCOMError("create_user", error_type=ERR_OUT_OF_RANGE,
                 error_message=f"The base model '{model}' does not exist") from exc
         raise
 
@@ -184,7 +188,7 @@ def create_user(conn, name: str, model: str = "", topic: str = "") -> None:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _E_UNEXPECTED:
                 # C++: "The base topic '%s' does not exist"
-                raise NatlinkCOMError("create_user", error_type=3,
+                raise NatlinkCOMError("create_user", error_type=ERR_OUT_OF_RANGE,
                     error_message=f"The base topic '{topic}' does not exist") from exc
             raise
 

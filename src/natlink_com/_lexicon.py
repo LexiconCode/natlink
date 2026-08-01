@@ -16,7 +16,9 @@ import logging
 import struct
 from typing import List, Optional
 
-from ._errors import NatlinkCOMError
+from ._errors import (NatlinkCOMError,
+                      ERR_INVALID_WORD,
+                      ERR_UNKNOWN_NAME)
 from ._dspeech_constants import (
     DGNWORDTESTFLAG_CASESENSITIVE,
     DGNWORDTESTFLAG_DICTONLY,
@@ -247,7 +249,7 @@ def _check_word_exists(lex, word, caller, dw_flags=None):
     if hr < 0:
         raise NatlinkCOMError(f"{caller}::WordTest", hr=hr)
     if hr == 1:  # S_FALSE — word is invalid (Dragon rejects the spelling)
-        raise NatlinkCOMError(caller, error_type=1,
+        raise NatlinkCOMError(caller, error_type=ERR_INVALID_WORD,
                               error_message=f"The word '{word}' is invalid "
                               "(NatSpeak does not allow that spelling)")
     return bool(exists)
@@ -419,7 +421,7 @@ def _check_add_result(hr, word):
     hr_unsigned = hr & 0xFFFFFFFF
     if hr_unsigned == _LEXERR_INVALIDTEXTCHAR:
         # C++: "The word '%s' is invalid (NatSpeak does not allow that spelling)"
-        raise NatlinkCOMError("add_word", error_type=8,
+        raise NatlinkCOMError("add_word", error_type=ERR_INVALID_WORD,
                               error_message=f"The word '{word}' is invalid "
                               "(NatSpeak does not allow that spelling)")
     if hr < 0:
@@ -443,12 +445,12 @@ def delete_word(conn, word: str) -> None:
     hr_unsigned = hr & 0xFFFFFFFF
     if hr_unsigned == _LEXERR_INVALIDTEXTCHAR:
         # C++: "The word '%s' is invalid (NatSpeak does not allow that spelling)"
-        raise NatlinkCOMError("delete_word", error_type=8,
+        raise NatlinkCOMError("delete_word", error_type=ERR_INVALID_WORD,
                               error_message=f"The word '{word}' is invalid "
                               "(NatSpeak does not allow that spelling)")
     if hr == 1:  # S_FALSE
         # C++: "The word '%s' is not in the active vocabulary"
-        raise NatlinkCOMError("delete_word", error_type=2,
+        raise NatlinkCOMError("delete_word", error_type=ERR_UNKNOWN_NAME,
                               error_message=f"The word '{word}' is not in "
                               "the active vocabulary")
     if hr < 0:
@@ -482,7 +484,7 @@ def set_word_info(conn, word: str, flags: int = 0) -> None:
     lex, lw = _require_lex(conn, "set_word_info")
     if not _check_word_exists(lex, word, "set_word_info"):
         # C++: "The word '%s' is not in the active vocabulary"
-        raise NatlinkCOMError("set_word_info", error_type=2,
+        raise NatlinkCOMError("set_word_info", error_type=ERR_UNKNOWN_NAME,
                               error_message=f"The word '{word}' is not in "
                               "the active vocabulary")
 
@@ -615,7 +617,7 @@ def get_word_prons(conn, word: str) -> Optional[List[str]]:
             if hr_unsigned == _LEXERR_INVALIDSENSE:
                 break  # no more pronunciations
             if hr_unsigned == _LEXERR_INVALIDTEXTCHAR:
-                raise NatlinkCOMError("get_word_prons", error_type=8,
+                raise NatlinkCOMError("get_word_prons", error_type=ERR_INVALID_WORD,
                     error_message=f"The word '{word}' is invalid "
                     "(NatSpeak does not allow that spelling)")
             if hr < 0:

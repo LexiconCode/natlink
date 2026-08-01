@@ -140,7 +140,7 @@ class DragonConnection:
     CALLBACK_SLOTS = (
         "on_paused_dispatch", "on_attrib_changed", "on_timer_dispatch",
         "on_phrase_finish", "on_phrase_hypothesis",
-        "on_dict_text_changed", "on_dict_begin", "lookup_grammar",
+        "on_dict_text_changed", "on_dict_begin", "lookup_com_grammar",
     )
 
     def _clear_callback_slots(self):

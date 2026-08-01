@@ -8,7 +8,12 @@ import ctypes
 import logging
 import struct
 
-from ._errors import NatlinkCOMError
+from ._errors import (NatlinkCOMError,
+                      ERR_BAD_GRAMMAR,
+                      ERR_INVALID_WORD,
+                      ERR_UNKNOWN_NAME,
+                      ERR_WRONG_STATE,
+                      ERR_WRONG_TYPE)
 from ._sdata import build_sdata as _build_sdata, sdata_to_bytes
 
 from ._dspeech_constants import DGNSRHDRTYPE_SELECT
@@ -163,11 +168,11 @@ def load_grammar(conn, data, all_results=False, hypothesis=False):
         hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
         if hr == _SRERR_INVALIDCHAR:
             # C++: "Invalid word in grammar"
-            raise NatlinkCOMError("grammar_load", error_type=8,
+            raise NatlinkCOMError("grammar_load", error_type=ERR_INVALID_WORD,
                 error_message="Invalid word in grammar") from exc
         if hr == _SRERR_GRAMMARERROR:
             # C++: "The grammar specification is in error"
-            raise NatlinkCOMError("grammar_load", error_type=6,
+            raise NatlinkCOMError("grammar_load", error_type=ERR_BAD_GRAMMAR,
                 error_message="The grammar specification is in error") from exc
         raise
 
@@ -251,17 +256,17 @@ class ComGramObj:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_INVALIDRULE:
                 # C++: "The rule %s is not defined in the grammar"
-                raise NatlinkCOMError("activate", error_type=10,
+                raise NatlinkCOMError("activate", error_type=ERR_UNKNOWN_NAME,
                     error_message=f"The rule {rule_name} is not defined "
                                   f"in the grammar") from exc
             if hr == _SRERR_GRAMMARTOOCOMPLEX:
                 # C++: "The grammar is too complex to be recognized"
-                raise NatlinkCOMError("activate", error_type=6,
+                raise NatlinkCOMError("activate", error_type=ERR_BAD_GRAMMAR,
                     error_message="The grammar is too complex to be "
                                   "recognized") from exc
             if hr == _SRERR_RULEALREADYACTIVE:
                 # C++: "The rule %s is already active"
-                raise NatlinkCOMError("activate", error_type=4,
+                raise NatlinkCOMError("activate", error_type=ERR_WRONG_STATE,
                     error_message=f"The rule {rule_name} is already "
                                   f"active") from exc
             raise
@@ -284,7 +289,7 @@ class ComGramObj:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_RULENOTACTIVE:
                 # C++: "The rule %s is not active"
-                raise NatlinkCOMError("deactivate", error_type=4,
+                raise NatlinkCOMError("deactivate", error_type=ERR_WRONG_STATE,
                     error_message=f"The rule {rule_name} is not "
                                   f"active") from exc
             raise
@@ -376,7 +381,7 @@ class ComGramObj:
         """
         if self._gram_cfg is None:
             # C++: onINVALIDINTERFACE "emptyList not support for this type of grammar"
-            raise NatlinkCOMError("list_set", error_type=12,
+            raise NatlinkCOMError("list_set", error_type=ERR_WRONG_TYPE,
                                   error_message="emptyList not supported for this type of grammar")
         sdata, _buf = self._make_sdata(_pack_srword_list(words))
         try:
@@ -385,7 +390,7 @@ class ComGramObj:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_INVALIDLIST:
                 # C++: onUNKNOWNNAME "The list %s is not defined in the grammar"
-                raise NatlinkCOMError("list_set", error_type=2,
+                raise NatlinkCOMError("list_set", error_type=ERR_UNKNOWN_NAME,
                     error_message=f"The list {list_name} is not defined "
                                   f"in the grammar") from exc
             raise
@@ -397,7 +402,7 @@ class ComGramObj:
         """
         if self._gram_cfg is None:
             # C++: onINVALIDINTERFACE "appendList not support for this type of grammar"
-            raise NatlinkCOMError("list_append", error_type=12,
+            raise NatlinkCOMError("list_append", error_type=ERR_WRONG_TYPE,
                                   error_message="appendList not supported for this type of grammar")
         sdata, _buf = self._make_sdata(_pack_srword_list([word]))
         try:
@@ -406,11 +411,11 @@ class ComGramObj:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_INVALIDCHAR:
                 # C++: "Invalid word in word list"
-                raise NatlinkCOMError("list_append", error_type=8,
+                raise NatlinkCOMError("list_append", error_type=ERR_INVALID_WORD,
                     error_message="Invalid word in word list") from exc
             if hr == _SRERR_INVALIDLIST:
                 # C++: onUNKNOWNNAME "The list %s is not defined in the grammar"
-                raise NatlinkCOMError("list_append", error_type=2,
+                raise NatlinkCOMError("list_append", error_type=ERR_UNKNOWN_NAME,
                     error_message=f"The list {list_name} is not defined "
                                   f"in the grammar") from exc
             raise
@@ -475,7 +480,7 @@ class ComGramObj:
         iface = self._lazy_qi("_gram_dictation", "ISRGramDictationW")
         if iface is None:
             # C++: onINVALIDINTERFACE "setContext not support for this type of grammar"
-            raise NatlinkCOMError("set_context", error_type=12,
+            raise NatlinkCOMError("set_context", error_type=ERR_WRONG_TYPE,
                                   error_message="setContext not supported "
                                   "for this type of grammar")
         # C++ passes CComBSTR(beforeText), CComBSTR(afterText) — empty strings
@@ -489,7 +494,7 @@ class ComGramObj:
             raise NatlinkCOMError(caller, error_message="Grammar not loaded")
         iface = self._lazy_qi("_gram_select", "IDgnSRGramSelectW")
         if iface is None:
-            raise NatlinkCOMError(caller, error_type=12,
+            raise NatlinkCOMError(caller, error_type=ERR_WRONG_TYPE,
                                   error_message=f"{caller} not supported "
                                   "for this type of grammar")
         return iface

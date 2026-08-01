@@ -11,7 +11,7 @@ import time
 from typing import List, Tuple
 
 from ._com_helpers import cotaskmem_free, release_raw, wrap_comtypes
-from ._errors import NatlinkCOMError
+from ._errors import NatlinkCOMError, ERR_BAD_WINDOW, ERR_WRONG_STATE
 from ._sdata import sdata_to_bytes
 
 log = logging.getLogger("natlink.com.dictation")
@@ -99,7 +99,7 @@ class ComDictObj:
         self._mustbe_usable("activate")
         if window_handle and not ctypes.windll.user32.IsWindow(window_handle):
             # C++: errBadWindow, "The handle %d does not refer to an existing window"
-            raise NatlinkCOMError("activate", error_type=10,
+            raise NatlinkCOMError("activate", error_type=ERR_BAD_WINDOW,
                 error_message=f"The handle {window_handle} does not refer "
                               f"to an existing window")
         self._voice_dict.Activate(window_handle)
@@ -133,7 +133,7 @@ class ComDictObj:
         else:
             if self._lock_count <= 0:
                 # C++: errWrongState, "The dictation object was not locked"
-                raise NatlinkCOMError("set_lock", error_type=4,
+                raise NatlinkCOMError("set_lock", error_type=ERR_WRONG_STATE,
                     error_message="The dictation object was not locked")
             self._text.UnLock()
             self._lock_count -= 1

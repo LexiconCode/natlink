@@ -10,7 +10,12 @@ import struct
 import threading
 import weakref
 
-from ._errors import NatlinkCOMError
+from ._errors import (NatlinkCOMError,
+                      ERR_BAD_GRAMMAR,
+                      ERR_DATA_MISSING,
+                      ERR_INVALID_WORD,
+                      ERR_OUT_OF_RANGE,
+                      ERR_WRONG_TYPE)
 from ._gram_obj import _pack_srword_list
 from ._dspeech_constants import (
     DGNERR_NOTASELECTGRAMMAR as _DGNERR_NOTASELECTGRAMMAR,
@@ -115,7 +120,7 @@ class ComResObj:
         except Exception as exc:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _E_UNEXPECTED:
-                raise NatlinkCOMError("get_results", error_type=3,
+                raise NatlinkCOMError("get_results", error_type=ERR_OUT_OF_RANGE,
                     error_message=f"There is no result number {choice}") from exc
             raise
         results = []
@@ -148,7 +153,7 @@ class ComResObj:
         except Exception as exc:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _E_UNEXPECTED:
-                raise NatlinkCOMError("get_word_info", error_type=3,
+                raise NatlinkCOMError("get_word_info", error_type=ERR_OUT_OF_RANGE,
                     error_message=f"There is no result number {choice}") from exc
             raise
         if count == 0:
@@ -203,7 +208,7 @@ class ComResObj:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _SRERR_NOTENOUGHDATA:
                 # C++: "The wave data is no longer available for this result"
-                raise NatlinkCOMError("get_wave", error_type=11,
+                raise NatlinkCOMError("get_wave", error_type=ERR_DATA_MISSING,
                     error_message="The wave data is no longer available "
                                   "for this result") from exc
             raise
@@ -245,7 +250,7 @@ class ComResObj:
             hr_val = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr_val == _SRERR_INVALIDCHAR:
                 # C++: "Invalid word in ResObj.correction transcript"
-                raise NatlinkCOMError("correction", error_type=8,
+                raise NatlinkCOMError("correction", error_type=ERR_INVALID_WORD,
                     error_message="Invalid word in ResObj.correction "
                                   "transcript") from exc
             raise
@@ -277,28 +282,28 @@ class ComResObj:
             raise NatlinkCOMError("get_select_info",
                                   error_message="No IDgnSRResSelect interface")
         conn = self._connection
-        lookup = conn.lookup_grammar if conn else None
-        gram_obj = lookup(gram_handle) if lookup else None
-        if gram_obj is None:
+        lookup = conn.lookup_com_grammar if conn else None
+        com_gram = lookup(gram_handle) if lookup else None
+        if com_gram is None:
             raise NatlinkCOMError("get_select_info",
                                   error_message="Grammar not found in registry")
-        grammar_guid = gram_obj._com_gram.get_grammar_guid()
+        grammar_guid = com_gram.get_grammar_guid()
         try:
             start, end, word_num = select.GetInfo(grammar_guid, choice)
         except Exception as exc:
             hr = getattr(exc, 'hresult', 0) & 0xFFFFFFFF
             if hr == _E_UNEXPECTED:
-                raise NatlinkCOMError("get_select_info", error_type=3,
+                raise NatlinkCOMError("get_select_info", error_type=ERR_OUT_OF_RANGE,
                     error_message=f"There is no result number "
                                   f"{choice}") from exc
             if hr == _DGNERR_NOTASELECTGRAMMAR:
                 # C++: "Result number %d was not from a Select grammar"
-                raise NatlinkCOMError("get_select_info", error_type=4,
+                raise NatlinkCOMError("get_select_info", error_type=ERR_WRONG_TYPE,
                     error_message=f"Result number {choice} was not from "
                                   f"a Select grammar") from exc
             if hr == _DGNERR_DOESNOTMATCHGRAMMAR:
                 # C++: "Result number %d was not from the indicated grammar"
-                raise NatlinkCOMError("get_select_info", error_type=4,
+                raise NatlinkCOMError("get_select_info", error_type=ERR_BAD_GRAMMAR,
                     error_message=f"Result number {choice} was not from "
                                   f"the indicated grammar") from exc
             raise

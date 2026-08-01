@@ -5,7 +5,8 @@ import logging
 import struct
 import time
 
-from ._errors import NatlinkCOMError
+from ._errors import (NatlinkCOMError,
+                      ERR_MIMIC_FAILED)
 from ._pump import pump, push_message_entry, message_loop, _kernel32
 from ._sdata import build_sdata as _build_sdata
 
@@ -140,7 +141,7 @@ def recognition_mimic(conn, client_code_fn, words):
             log.debug("RecognitionMimic(%d words) OK", len(words))
             return
 
-    raise NatlinkCOMError("recognition_mimic", error_type=7,
+    raise NatlinkCOMError("recognition_mimic", error_type=ERR_MIMIC_FAILED,
                           error_message="MimicDone reported failure (no matching grammar)")
 
 
