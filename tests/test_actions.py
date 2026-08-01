@@ -6,6 +6,29 @@ These tests do NOT require Dragon — all external calls are mocked.
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _run_actions_inline(monkeypatch):
+    """Force ``_dispatch_or_run`` down its inline path.
+
+    ``toggle_loader``/``reload_grammars``/``set_mic`` route their work
+    through ``_dispatch_or_run``, which queues onto the STA thread whenever
+    a hidden window exists and only runs inline when one does not.  These
+    are unit tests asserting that an action invokes its implementation, so
+    they depend on the inline path — but if an online test earlier in the
+    session left a live connection up, the hidden window is alive, the call
+    is queued instead of run, and the assertions see zero calls.
+
+    Pinning ``dispatch`` to False reproduces the no-hidden-window
+    environment ``_dispatch_or_run`` documents for unit tests, making these
+    tests independent of connection state and suite ordering.  Without it
+    the ``assert_not_called`` tests also pass vacuously.
+    """
+    monkeypatch.setattr("natlink_com._hidden_wnd.dispatch",
+                        lambda *a, **k: False)
+
 
 class TestDragonProcessControl(unittest.TestCase):
     """Test Dragon process control actions."""

@@ -221,7 +221,15 @@ def create():
             0, 0, 0, 0, None, None, hInstance, None)
     finally:
         if _fh_was_enabled:
-            _fh.enable()
+            try:
+                _fh.enable()
+            except Exception:
+                # faulthandler.enable() writes to sys.stderr and needs a real
+                # file descriptor.  Hosts that replace sys.stderr with a stream
+                # that has none — pytest's capture, GUI shells, natlinkcore's
+                # own redirect_output — would otherwise abort hidden-window
+                # creation, and with it the whole connection, over a debug aid.
+                log.debug("could not re-enable faulthandler", exc_info=True)
 
     if not _hwnd:
         log.error("CreateWindowExW failed: %d", ctypes.get_last_error())

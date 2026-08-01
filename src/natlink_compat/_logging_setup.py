@@ -341,6 +341,26 @@ def _setup_logging_and_redirect():
 
     Reuses the shared _file_handler created by init_file_logging().
     """
+    def _delegate_fileno(stream, original):
+        """Give natlinkcore's redirect stream a working ``fileno()``.
+
+        ``natlinkcore.redirect_output.FakeTextIO.fileno()`` raises
+        NotImplementedError, so once ``redirect()`` is installed anything
+        needing a real file descriptor breaks process-wide for the rest of
+        the session: ``subprocess(..., stderr=sys.stderr)``, logging
+        handlers, and pytest's capture machinery.  Delegate to the stream we
+        just replaced; if that one has no descriptor either, leave the
+        stream as-is rather than promise a descriptor we do not have.
+        """
+        try:
+            fd = original.fileno()
+        except Exception:
+            return
+        try:
+            stream.fileno = lambda: fd
+        except Exception:
+            log.debug("could not install fileno() on %r", stream, exc_info=True)
+
     with _state.lock:
         global _original_stdout, _original_stderr
         global _file_handler, _notify_handler, _installed_loggers
@@ -350,6 +370,8 @@ def _setup_logging_and_redirect():
             _original_stderr = _sys2.stderr
             from natlinkcore.redirect_output import redirect
             redirect()
+            _delegate_fileno(_sys2.stdout, _original_stdout)
+            _delegate_fileno(_sys2.stderr, _original_stderr)
         except Exception:
             log.debug("redirect_output not available", exc_info=True)
 

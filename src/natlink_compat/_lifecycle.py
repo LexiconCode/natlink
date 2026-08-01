@@ -135,15 +135,26 @@ def _establish_com_connection():
     # another process (a second natlink, a standalone loader, or the test
     # suite) owns the connection; refuse rather than corrupt event ordering.
     # The owner releases it via natDisconnect (tray menu > Inactive).
-    _state._conn_mutex = kernel32.CreateMutexW(None, True, "NatlinkConnectionActive")
-    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+    # A handle still sitting here means a previous teardown did not run to
+    # completion (_state.reset closes it). Release it before creating a new
+    # one: otherwise CreateMutexW returns a *second* handle to the same named
+    # object with ERROR_ALREADY_EXISTS, the branch below closes only that new
+    # handle, and the original leaks with nothing left referencing it — the
+    # mutex then stays held for the life of the process and every later
+    # natConnect fails with ConnectionInUse, including our own reconnects.
+    if _state._conn_mutex:
         kernel32.CloseHandle(_state._conn_mutex)
         _state._conn_mutex = None
+
+    handle = kernel32.CreateMutexW(None, True, "NatlinkConnectionActive")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(handle)
         from ._exceptions import ConnectionInUse
         raise ConnectionInUse(
             "Another process is already connected to Dragon. Release that "
             "connection (natlink tray menu > Inactive, or call natDisconnect) "
             "before connecting.")
+    _state._conn_mutex = handle
 
     _state.during_init = True
     try:
