@@ -7,8 +7,10 @@ from typing import List, Optional, Tuple
 
 from ._connection import DragonConnection
 from ._dict_obj import ComDictObj, create_dictation as _create_dictation
+from ._dspeech_constants import HOOKERR_CANNOTINJECT, HOOKERR_INJECTFAILED
 from ._errors import NatlinkCOMError
 from ._gram_obj import ComGramObj, load_grammar as _load_grammar
+from ._speech_constants import E_BUFFERTOOSMALL
 from ._win32 import (
     get_clipboard, get_cursor_pos, get_screen_size,
     get_current_module, is_dragon_running,
@@ -153,10 +155,17 @@ class NatlinkCOM:
     def get_screen_size(self) -> Tuple[int, int]:
         return get_screen_size()
 
-    # HRESULT codes from Dragon hook DLL — dspeech.h / speech.h
-    _E_BUFFERTOOSMALL_HOOK = 0x80045005
-    _HOOKERR_INJECTFAILED = 0x80040009
-    _HOOKERR_CANNOTINJECT = 0x8004000A
+    # From the canonical transcriptions, not re-derived here. These three were
+    # previously hand-written as 0x80045005 / 0x80040009 / 0x8004000A, none of
+    # which any Dragon build ever returns: dspeech.h defines them via
+    # HOOKAPIERROR(x) = FACILITY_ITF | (x + 0x2000) and SPEECHERROR(x) =
+    # FACILITY_ITF | (x + 0x200), giving 0x8004020E / 0x8004200C / 0x80042008.
+    # With the wrong values the E_BUFFERTOOSMALL retry below could never fire
+    # (module paths longer than the 520-char buffer silently truncated) and no
+    # hook error ever matched _HOOK_SOFT_ERRORS.
+    _E_BUFFERTOOSMALL_HOOK = E_BUFFERTOOSMALL
+    _HOOKERR_INJECTFAILED = HOOKERR_INJECTFAILED
+    _HOOKERR_CANNOTINJECT = HOOKERR_CANNOTINJECT
 
     # HRESULTs where Dragon's hook failed but the condition may be
     # temporary — return ("", "", 0) matching C++ behavior.

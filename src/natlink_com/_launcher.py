@@ -20,7 +20,8 @@ import time
 from pathlib import Path
 
 from ._com_helpers import release_raw
-from ._connection import CLSCTX_LOCAL_SERVER  # also sets ole32.CoCreateInstance argtypes
+from ._connection import (CLSCTX_LOCAL_SERVER,  # also sets CoCreateInstance argtypes
+                          CLSCTX_ACTIVATE_32_BIT_SERVER)
 from ._win32 import user32, kernel32, DRAGON_CLS
 
 log = logging.getLogger("natlink.com.launcher")
@@ -65,7 +66,13 @@ def _wait_for_com_ready(max_wait=30, initial_delay=0.5):
         while time.monotonic() < deadline:
             ppv = ctypes.c_void_p()
             hr = ole32.CoCreateInstance(
-                ctypes.byref(CLSID_DgnSite), None, CLSCTX_LOCAL_SERVER,
+                ctypes.byref(CLSID_DgnSite), None,
+                # Must match DragonConnection.connect exactly. Dragon is a
+                # 32-bit LocalServer32; without ACTIVATE_32_BIT_SERVER this
+                # probe resolves to the 64-bit-view DgnSite entry and can
+                # never succeed, so it burns the full max_wait on every
+                # connect and reconnect before "connecting anyway".
+                CLSCTX_LOCAL_SERVER | CLSCTX_ACTIVATE_32_BIT_SERVER,
                 ctypes.byref(IID_IUnknown), ctypes.byref(ppv))
             if hr >= 0:
                 if ppv.value:
