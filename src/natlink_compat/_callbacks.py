@@ -472,9 +472,14 @@ def _set_callback(cb_list, callback, owner_pkg=None):
     if callback is None:
         # Legacy natlink had a single callback slot, so clearing it was
         # unambiguous. Here several loaders coexist, and a blanket clear lets
-        # one of them silently disable the others: dragonfly's engine
-        # disconnect(), natlinkcore's finish() and NatlinkTimer all call
-        # set*Callback(None) as ordinary teardown.
+        # one of them silently disable the others. Verified callers of the
+        # module-level form: dragonfly's timer (backend_natlink/timer.py:61)
+        # and natlinkcore's natlinktimer (:284, :377), both
+        # setTimerCallback(None, 0) as ordinary teardown — so a dragonfly
+        # timer shutting down would stop natlinkcore's timers too.
+        #
+        # Note the per-grammar GramObj.setBeginCallback(None) is a different
+        # API and does not reach this list.
         #
         # Scope the clear to whoever is asking. If the caller can be
         # attributed and owns entries, drop only those. If it can be
