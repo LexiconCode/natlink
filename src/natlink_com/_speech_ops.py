@@ -350,10 +350,22 @@ def input_from_file(conn, path, flags=0, playlist=b""):
                         "(Dragon omits it from W-variant marshal); "
                         "playlist ignored, playing entire file")
 
-        _kernel32.ResetEvent(conn.playback_done)
+        # Dragon reports completion as AttribChanged2(DGNSRAC_PLAYBACKDONE),
+        # which _engine_sink turns into signal(WM_ATTRIBCHANGED, dwCode) —
+        # the same message-entry mechanism playString/execScript/mimic use.
+        # This previously waited on conn.playback_done, a Win32 event that
+        # nothing in the codebase ever signals, so the call could only ever
+        # burn the full timeout: measured at exactly 300.0s against a live
+        # Dragon with a valid WAV. push_message_entry before EnableSet, so a
+        # completion arriving immediately is caught by message_loop's
+        # pre-consumed check rather than lost.
+        from . import _hidden_wnd
+        from ._dspeech_constants import DGNSRAC_PLAYBACKDONE
+        entry = push_message_entry(_hidden_wnd.WM_ATTRIBCHANGED,
+                                   DGNSRAC_PLAYBACKDONE)
         afs.EnableSet(True)
         started = True
-        if not pump(conn.playback_done, 300000, "inputFromFile"):  # 5min
+        if message_loop(entry, 300000, "inputFromFile") is None:  # 5min
             raise NatlinkCOMError("inputFromFile",
                                   error_message="inputFromFile timed out (5min)")
 

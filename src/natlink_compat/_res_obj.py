@@ -28,30 +28,34 @@ class ResObj:
     def getResults(self, choice: int = 0) -> Optional[List[Tuple[str, int]]]:
         """Get recognition results as (word, ruleNumber) tuples.
 
-        Returns None if no results available for the given choice.
+        Raises ``natlink.OutOfRange`` when *choice* is past the last
+        available result, matching the C++ original (ResultObject.cpp:169).
+        Callers enumerate alternatives with the idiom::
+
+            i = 0
+            while 1:
+                try: words = res.getResults(i)
+                except natlink.OutOfRange: break
+                i += 1
+
+        which unimacro's ``_oops`` and the natlinkcore samples rely on — so
+        swallowing the error and returning None turns the loop terminator
+        into a TypeError further downstream.
         """
-        try:
-            dicts = self._proxy.get_results(choice)
-            if dicts is None:
-                return None
-        except (RuntimeError, NatlinkCOMError):
-            log.debug("getResults(choice=%d) failed", choice, exc_info=True)
+        dicts = _com_call("ResObj.getResults", self._proxy.get_results, choice)
+        if dicts is None:
             return None
         return [(d["word"], d["cfg_parse"]) for d in dicts]
 
     def getWords(self, choice: int = 0):
         """Get recognized words as a flat string list.
 
-        Returns None if no results are available for the given choice.
+        Raises ``natlink.OutOfRange`` past the last result — see getResults.
         """
-        try:
-            result = self._proxy.get_results(choice)
-            if result is None:
-                return None
-            return [d["word"] for d in result]
-        except (RuntimeError, NatlinkCOMError):
-            log.debug("getWords(choice=%d) failed", choice, exc_info=True)
+        result = _com_call("ResObj.getWords", self._proxy.get_results, choice)
+        if result is None:
             return None
+        return [d["word"] for d in result]
 
     def getWordInfo(self, choice: int = 0) -> Optional[
             List[Tuple[str, int, int, int, int, int, str]]]:
@@ -59,12 +63,11 @@ class ResObj:
 
         Each tuple: (word, cfgParse, wordScore, startTime, endTime, engineFlags, pronunciation)
         Times are in 100ns units relative to utterance start.
+
+        Raises ``natlink.OutOfRange`` past the last result — see getResults.
         """
-        try:
-            dicts = self._proxy.get_word_info(choice)
-        except (RuntimeError, NatlinkCOMError):
-            log.debug("getWordInfo(choice=%d) failed", choice, exc_info=True)
-            return None
+        dicts = _com_call("ResObj.getWordInfo", self._proxy.get_word_info,
+                          choice)
         if not dicts:
             return None
         result = []

@@ -103,16 +103,28 @@ class ComResObj:
     def get_results(self, choice=0):
         """Get recognized words for a given choice.
 
-        Matches C++ CResultObject::getResults:
-          ISRResGraphW::BestPathWord + GetWordNode per word.
-          For choice 0, uses cached pre-parsed words (more efficient).
+        Matches C++ CResultObject::getResults: ISRResGraphW::BestPathWord +
+        GetWordNode per word, for *every* choice including 0.
+
+        Choice 0 used to be served from the cached SRPHRASEW words as an
+        optimisation, but the number in an SRPHRASEW word is ``dwWordNum`` —
+        a vocabulary/word-table id — whereas callers expect ``dwCFGParse``,
+        the CFG rule number. Measured on Dragon 13 and 14 with a two-rule
+        grammar sharing a word: the cached path reported the same number for
+        that word under both rules (a rule number cannot be rule-invariant),
+        while the graph correctly reported one number per rule. Since
+        ``natlinkutils.GrammarBase`` maps these onto ``gotResults_<rule>``,
+        the cached path silently dispatched every rule-based grammar wrong.
         """
         self._mustbe_inited("ResObj.getResults")
-        if choice == 0:
-            return [{"word": w, "cfg_parse": n} for w, n in self._words]
-        # For choice > 0, use BestPathWord (matching C++ fully)
         graph = self._qi("ISRResGraphW")
         if graph is None:
+            if choice == 0 and self._words:
+                # No results graph (e.g. a ResObj vended by DictObj). The
+                # words are still correct; the rule number is simply not
+                # recoverable here, so report 0 rather than a word id that
+                # would be mistaken for a rule.
+                return [{"word": w, "cfg_parse": 0} for w, _ in self._words]
             raise NatlinkCOMError("get_results",
                                   error_message="No ISRResGraphW interface")
         try:

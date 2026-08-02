@@ -434,16 +434,61 @@ def _get_owner(callback):
     return None
 
 
+def _clearing_package():
+    """Top-level package of whoever is clearing a callback, or None.
+
+    Prefers the loader currently being started/stopped (``loader_registration``
+    sets it), then walks out of natlink_compat to the first foreign frame —
+    that is the caller of set*Callback(None).
+    """
+    if _state.registering_loader is not None:
+        pkg = _loader_package(_state.registering_loader)
+        if pkg:
+            return pkg
+    import sys as _sys
+    depth = 2
+    while depth < 12:
+        try:
+            frame = _sys._getframe(depth)
+        except ValueError:
+            return None
+        mod = frame.f_globals.get("__name__", "")
+        root = mod.split(".")[0]
+        if root and root not in ("natlink_compat", "natlink"):
+            return root
+        depth += 1
+    return None
+
+
 def _set_callback(cb_list, callback, owner_pkg=None):
     """Add, replace, or clear a callback in a callback list.
 
-    If callback is None, removes all entries (full clear).
+    If callback is None, removes the *calling package's* entries — see below.
     If a callback from the same owner is already registered, replaces it.
     Otherwise appends. Lambdas with no owner replace any existing ownerless
     entry to prevent accumulation. ``owner_pkg`` records which loader package
     registered the callback (see ``_CB``) for precise per-loader teardown.
     """
     if callback is None:
+        # Legacy natlink had a single callback slot, so clearing it was
+        # unambiguous. Here several loaders coexist, and a blanket clear lets
+        # one of them silently disable the others: dragonfly's engine
+        # disconnect(), natlinkcore's finish() and NatlinkTimer all call
+        # set*Callback(None) as ordinary teardown.
+        #
+        # Scope the clear to whoever is asking. If the caller can be
+        # attributed and owns entries, drop only those. If it can be
+        # attributed and owns none, it has nothing to clear. Only an
+        # unattributable caller falls back to the legacy full clear.
+        pkg = owner_pkg or _clearing_package()
+        if pkg:
+            remaining = [e for e in cb_list if e.owner != pkg]
+            if len(remaining) != len(cb_list):
+                cb_list[:] = remaining
+                return
+            if any(e.owner is not None for e in cb_list):
+                # Others own everything here; nothing of ours to remove.
+                return
         cb_list.clear()
         return
 

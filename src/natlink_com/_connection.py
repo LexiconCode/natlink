@@ -111,12 +111,8 @@ class DragonConnection:
         # Win32 manual-reset events for COM callback signaling.
         # Initialized to 0 before CreateEventW so __del__ is safe
         # even if __init__ fails partway through.
-        self._playback_done = 0
-        self._mimic_done = 0
         self._mimic_failed = False
         _k32 = ctypes.windll.kernel32
-        self._playback_done = _k32.CreateEventW(None, True, False, None)
-        self._mimic_done = _k32.CreateEventW(None, True, False, None)
         self._paused_cookie = None      # set during Paused, cleared after Resume
         self._deferred_cookies = []     # Paused cookies queued when results pending
         self._pause_recog = 0           # >0 means defer Paused until results done
@@ -149,10 +145,6 @@ class DragonConnection:
 
     def __del__(self):
         _k32 = ctypes.windll.kernel32
-        if self._playback_done:
-            _k32.CloseHandle(self._playback_done)
-        if self._mimic_done:
-            _k32.CloseHandle(self._mimic_done)
 
     def connect(self, register_marshal: bool = True) -> None:
         """Establish COM connection to Dragon.
@@ -178,10 +170,6 @@ class DragonConnection:
             register_marshal: If True, register custom marshal DLLs.
         """
         _k32 = ctypes.windll.kernel32
-        if not self._playback_done:
-            self._playback_done = _k32.CreateEventW(None, True, False, None)
-        if not self._mimic_done:
-            self._mimic_done = _k32.CreateEventW(None, True, False, None)
 
         # STA (2) — COM callbacks serialized on main thread via message queue,
         # matching the original C++ architecture.
@@ -576,12 +564,6 @@ class DragonConnection:
 
         # Close Win32 event handles — fresh ones are created on next connect.
         _k32 = ctypes.windll.kernel32
-        if self._playback_done:
-            _k32.CloseHandle(self._playback_done)
-            self._playback_done = 0
-        if self._mimic_done:
-            _k32.CloseHandle(self._mimic_done)
-            self._mimic_done = 0
         self._mimic_failed = False
         if self._pause_recog > 0:
             log.warning("disconnect: pause_recog was %d (should be 0)",
@@ -790,14 +772,6 @@ class DragonConnection:
     @property
     def action_sink(self):
         return self._action_sink
-
-    @property
-    def playback_done(self):
-        return self._playback_done
-
-    @property
-    def mimic_done(self):
-        return self._mimic_done
 
     @property
     def mimic_failed(self):

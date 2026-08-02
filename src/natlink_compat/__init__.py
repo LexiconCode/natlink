@@ -30,7 +30,7 @@ from ._logging_control import (
 )
 from ._speech import playString, playEvents, execScript, recognitionMimic
 from ._ui_protocol import notify_text
-from ._legacy import setMessageWindow, displayText
+from ._legacy import setMessageWindow, setTrayIcon, displayText
 from ._system import (getClipboard, getCursorPos, getScreenSize, getCurrentModule,
                       getCurrentUser, getMicState, setMicState, inputFromFile, getCallbackDepth)
 from ._users import (getAllUsers, createUser, openUser, saveUser, getUserTraining, getTrainingMode, startTraining, finishTraining)
@@ -197,6 +197,10 @@ __all__ = [
     "PHASE_INACTIVE", "PHASE_ERROR",
     "playString", "playEvents", "execScript",
     "recognitionMimic", "notify_text", "displayText",
+    # Legacy shims — must be in __all__ or `import natlink` cannot
+    # reach them and _legacy.py fails at the one job it has.
+    "setMessageWindow", "setTrayIcon",
+    "dragon_status", "stop_provider",
     "getClipboard", "getCursorPos", "getScreenSize",
     "getCurrentModule", "getCurrentUser",
     "getMicState", "setMicState",

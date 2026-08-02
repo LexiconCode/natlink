@@ -30,6 +30,26 @@ def setMessageWindow(callback: Optional[Callable] = None, flags: int = 0) -> Non
     """
 
 
+def setTrayIcon(iconName: str = "", toolTip: str = "",
+                callback: Optional[Callable] = None) -> None:
+    """Draw an icon in the taskbar tray (accepted, not currently drawn).
+
+    In the original C extension (DragonCode.cpp:3575) this added an icon to
+    the notification area. natlink's tray is now owned by the UI provider,
+    which exposes no per-grammar icon slot, so this is accepted and ignored
+    rather than raising AttributeError — unimacro's ``_repeat`` repeating
+    mode, its tray-icon grammars and the natlinkcore ``_mouse`` sample all
+    call it unconditionally and would otherwise crash.
+
+    Args:
+        iconName: Absolute path to a ``.ico`` file, or one of the predefined
+            names (``right``, ``left``, ``up``, ``down``, ``nodir``), or
+            ``""`` to remove the icon.
+        toolTip: Tooltip text shown when hovering the icon.
+        callback: Called when the user clicks the icon.
+    """
+
+
 def displayText(text: str, isError: bool = False, logText: bool = True) -> None:
     """Append a message to the natlink output window.
 
