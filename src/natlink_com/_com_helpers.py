@@ -1,9 +1,38 @@
 """Low-level COM vtable helpers and factory utilities."""
 
 import ctypes
+import itertools
 from ctypes import POINTER, byref, c_void_p, c_ulong, c_long, c_wchar
 
 from ._guids import GUID, IID_IDgnErrorW
+
+# Process-wide, monotonic, never reused. next() on itertools.count is atomic
+# under the GIL, so no lock is needed.
+_object_handles = itertools.count(1)
+
+
+def next_object_handle() -> int:
+    """Allocate a handle for a grammar or dictation object.
+
+    Deliberately *not* ``id(self)``. CPython reallocates freed heap addresses
+    to new objects of the same size, and these handles are not just local
+    keys: they index the connection's sink registry and the compat registries,
+    and they travel through the PostMessage deferral queue, where they are
+    resolved only when the pump drains — potentially after the object they
+    named has been freed.
+
+    With ``id(self)`` that window is reachable in normal use: a grammar
+    receives PhraseFinish and a WM_SENDRESULTS closure is queued carrying its
+    handle; before the pump drains, a reload unloads that grammar and loads
+    another whose object lands on the freed address; the queued closure then
+    resolves the handle to the *new* grammar and delivers the old one's
+    recognition to it. Grammar reload is exactly when this happens, and it is
+    the most common operation in a natlink session.
+
+    The C++ original passed real interface pointers with no post-and-drain
+    gap, so it had no equivalent exposure.
+    """
+    return next(_object_handles)
 
 _ole32 = ctypes.windll.ole32
 _ole32.CoTaskMemFree.argtypes = [c_void_p]

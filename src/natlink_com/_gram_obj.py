@@ -8,6 +8,7 @@ import ctypes
 import logging
 import struct
 
+from ._com_helpers import next_object_handle
 from ._errors import (NatlinkCOMError,
                       ERR_BAD_GRAMMAR,
                       ERR_INVALID_WORD,
@@ -211,7 +212,7 @@ class ComGramObj:
             punk: comtypes IUnknown from GrammarLoad (for lazy QI).
             tlb: Dragon type library module (interface definitions).
         """
-        self._handle = id(self)
+        self._handle = next_object_handle()
         self._gram_common = gram_common
         self._gram_cfg = gram_cfg
         self._sink = sink

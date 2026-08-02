@@ -10,7 +10,8 @@ import logging
 import time
 from typing import List, Tuple
 
-from ._com_helpers import cotaskmem_free, release_raw, wrap_comtypes
+from ._com_helpers import (cotaskmem_free, next_object_handle,
+                           release_raw, wrap_comtypes)
 from ._errors import NatlinkCOMError, ERR_BAD_WINDOW, ERR_WRONG_STATE
 from ._sdata import sdata_to_bytes
 
@@ -46,7 +47,7 @@ class ComDictObj:
             dgn_text: comtypes IDgnVDctTextW pointer (or None).
             sink: DictSink COMObject (prevent GC).
         """
-        self._handle = id(self)
+        self._handle = next_object_handle()
         self._voice_dict = voice_dict
         self._text = text_iface
         self._dgn_text = dgn_text
