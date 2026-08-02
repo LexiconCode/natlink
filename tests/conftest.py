@@ -116,6 +116,68 @@ def _file_sort_key(item):
         return len(_TEST_FILE_ORDER)
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--restart-dragon", action="store_true", default=False,
+        help="Restart Dragon before the session and wait until it accepts a "
+             "COM connection. Use for measurement runs and for reproducing "
+             "cross-run effects: Dragon carries state between sessions "
+             "(notably stale CNotify sink registrations), which skews "
+             "refcount assertions and can mask teardown bugs.")
+
+
+def _wait_for_com_ready(timeout=180):
+    """Block until Dragon accepts and releases a real COM connection.
+
+    ``_dragon.start()`` only waits for the *process*, which appears long
+    before the engine is usable — connecting too early fails with
+    CO_E_SERVER_EXEC_FAILURE, or with SRERR_NOUSERSELECTED if the profile has
+    not loaded. Connecting is the only check that means anything.
+    """
+    import natlink_compat as natlink
+    from natlink_compat._state import _state
+
+    class _NullUI:
+        def on_state_changed(self, state): pass
+        def on_text(self, text, level=20): pass
+
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            if _state.ui_provider is None:
+                _state.ui_provider = _NullUI()
+            natlink.natConnect(discovered_loaders=[])
+            user = natlink.getCurrentUser()
+            natlink.natDisconnect()
+            if user and user[0]:
+                return True
+            last = "connected but no user profile loaded"
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            try:
+                natlink.natDisconnect()
+            except Exception:
+                pass
+        time.sleep(3)
+    _test_log.error("Dragon not ready after %ds: %s", timeout, last)
+    return False
+
+
+def pytest_configure(config):
+    """Optionally restart Dragon so the session starts from known state."""
+    if not config.getoption("--restart-dragon"):
+        return
+    from natlink_com import _dragon
+    print("\n[conftest] restarting Dragon for a clean session...")
+    _dragon.restart(wait=30)
+    if _wait_for_com_ready():
+        print("[conftest] Dragon ready.")
+    else:
+        print("[conftest] WARNING: Dragon did not become ready; "
+              "online tests will likely fail.")
+
+
 def pytest_collection_modifyitems(config, items):
     """Order tests, auto-skip based on Dragon status, deselect opt-in groups."""
     # Sort by explicit file order
