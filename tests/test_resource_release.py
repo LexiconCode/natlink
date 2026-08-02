@@ -1,0 +1,191 @@
+"""test_resource_release.py - What Dragon actually releases, measured.
+
+Per-loader teardown depends on being able to release one loader's objects
+without disturbing another's. Whether that is possible is a property of
+Dragon, not of our code, so it was determined empirically and is pinned here.
+
+The instrument is ``comtypes.COMObject._refcnt`` on each sink, which counts
+Dragon's cross-process references. Our own Python attribute is not an AddRef
+and does not contribute, so 0 means Dragon has let go entirely.
+
+Measured on Dragon 13 (2026-08-02):
+
+  grammar sink    5 refs after load/activate  -> 0 after unload()
+  dictation sink  7 refs after activate       -> 7 after deactivate()
+                                              -> 0 after destroy()
+
+The dictation asymmetry is the trap: ``deactivate()`` releases nothing, so a
+loader that deactivates without destroying leaks every reference.
+
+Notably there is no explicit per-grammar UnRegister in the API — releasing
+our interface pointers is what makes Dragon let go.
+"""
+
+import time
+
+import pytest
+
+from _helpers import compile_grammar
+
+
+def _rc(sink):
+    from natlink_com._connection import _sink_com_refcount
+    return _sink_com_refcount(sink)
+
+
+def _drain(seconds=1.0):
+    """Pump so Dragon's cross-process Release calls can land."""
+    from natlink_com._pump import pump
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        pump()
+        time.sleep(0.02)
+
+
+@pytest.mark.online
+class TestGrammarSinkRelease:
+
+    def test_dragon_takes_refs_and_releases_them_all_on_unload(self, live_connection):
+        import natlink_compat as natlink
+        gram = natlink.GramObj()
+        gram.load(compile_grammar("<r> exported = release probe one;"))
+        sink = gram._com_gram._sink
+        gram.activate("r", 0)
+
+        held = _rc(sink)
+        assert held > 0, "Dragon took no reference on the grammar sink"
+
+        gram.unload()
+        _drain()
+        assert _rc(sink) == 0, (
+            f"Dragon retained {_rc(sink)} of {held} refs after unload — the "
+            f"grammar sink cannot be reclaimed, so per-loader teardown leaks")
+
+    def test_unloading_one_grammar_leaves_another_untouched(self, live_connection):
+        """Isolation is what makes per-loader teardown possible at all."""
+        import natlink_compat as natlink
+        fired = {"a": 0, "b": 0}
+        a, b = natlink.GramObj(), natlink.GramObj()
+        try:
+            a.setResultsCallback(lambda w, r: fired.__setitem__("a", fired["a"] + 1))
+            a.load(compile_grammar("<ra> exported = isolation alpha probe;"))
+            sink_a = a._com_gram._sink
+            a.activate("ra", 0)
+
+            b.setResultsCallback(lambda w, r: fired.__setitem__("b", fired["b"] + 1))
+            b.load(compile_grammar("<rb> exported = isolation bravo probe;"))
+            sink_b = b._com_gram._sink
+            b.activate("rb", 0)
+            b_before = _rc(sink_b)
+
+            a.unload()
+            _drain()
+
+            assert _rc(sink_a) == 0
+            assert _rc(sink_b) == b_before, "unloading A disturbed B's refs"
+
+            natlink.recognitionMimic(["isolation", "bravo", "probe"])
+            _drain(2.0)
+            assert fired["b"] >= 1, "B stopped recognising after A was unloaded"
+            assert fired["a"] == 0, "the unloaded grammar still received results"
+        finally:
+            for g in (a, b):
+                try:
+                    g.unload()
+                except Exception:
+                    pass
+
+
+@pytest.mark.online
+class TestReleaseDuringCallback:
+    """Teardown does not get to choose its moment: a loader may be removed
+    while Dragon is mid-dispatch into one of its grammars.
+    """
+
+    def test_unload_from_inside_its_own_results_callback(self, live_connection):
+        import natlink_compat as natlink
+        gram = natlink.GramObj()
+        seen = {"fired": 0, "error": None}
+        captured = {}
+
+        def _on_results(words, res):
+            seen["fired"] += 1
+            try:
+                gram.unload()          # release while Dragon is calling us
+            except Exception as exc:
+                seen["error"] = f"{type(exc).__name__}: {exc}"
+
+        gram.setResultsCallback(_on_results)
+        gram.load(compile_grammar("<r> exported = reentrant unload probe;"))
+        captured["sink"] = gram._com_gram._sink
+        gram.activate("r", 0)
+
+        natlink.recognitionMimic(["reentrant", "unload", "probe"])
+        _drain(2.0)
+
+        assert seen["fired"] == 1
+        assert seen["error"] is None, f"unload inside callback failed: {seen['error']}"
+        assert _rc(captured["sink"]) == 0
+        # The engine must survive releasing a sink it was dispatching into.
+        assert natlink.getMicState() in ("on", "off", "sleeping")
+
+    def test_unload_from_begin_callback_mid_utterance(self, live_connection):
+        """Removing a loader between gotBegin and results — the reload window."""
+        import natlink_compat as natlink
+        gram = natlink.GramObj()
+        seen = {"begin": 0, "results": 0, "error": None}
+        captured = {}
+
+        def _on_begin(info):
+            seen["begin"] += 1
+            try:
+                gram.unload()
+            except Exception as exc:
+                seen["error"] = f"{type(exc).__name__}: {exc}"
+
+        gram.setBeginCallback(_on_begin)
+        gram.setResultsCallback(lambda w, r: seen.__setitem__("results", seen["results"] + 1))
+        gram.load(compile_grammar("<r> exported = begin unload probe;"))
+        captured["sink"] = gram._com_gram._sink
+        gram.activate("r", 0)
+
+        try:
+            natlink.recognitionMimic(["begin", "unload", "probe"])
+        except Exception:
+            pass  # no active grammar remains to match — acceptable
+        _drain(2.0)
+
+        assert seen["begin"] == 1
+        assert seen["error"] is None, f"unload in begin callback failed: {seen['error']}"
+        assert _rc(captured["sink"]) == 0
+        assert natlink.getMicState() in ("on", "off", "sleeping")
+
+
+@pytest.mark.online
+class TestDictationSinkRelease:
+
+    def test_deactivate_does_not_release_but_destroy_does(self, live_connection):
+        """The asymmetry that makes dictation objects easy to leak.
+
+        A loader that deactivates its dictation objects without destroying
+        them leaves every Dragon reference in place.
+        """
+        import natlink_compat as natlink
+        dobj = natlink.DictObj()
+        dobj.activate(0)               # DictObj is lazily constructed
+        sink = dobj._com_dict._sink
+
+        held = _rc(sink)
+        assert held > 0, "Dragon took no reference on the dictation sink"
+
+        dobj.deactivate()
+        _drain(0.5)
+        assert _rc(sink) == held, (
+            "deactivate() released references — if Dragon's behaviour changed, "
+            "the teardown guidance in this module needs revisiting")
+
+        dobj.destroy()
+        _drain()
+        assert _rc(sink) == 0, (
+            f"Dragon retained {_rc(sink)} refs after destroy() — dictation "
+            f"objects cannot be reclaimed per-loader")
