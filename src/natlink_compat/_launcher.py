@@ -355,9 +355,17 @@ def _do_activate_on_main(launcher, natlink):
         return
     from ._ui_protocol import set_phase, PHASE_INACTIVE, notify_text
 
+    from natlink_com._win32 import is_dragon_running
+
     log.info("Activate: reconnecting to Dragon")
-    if not _probe_and_wait(launcher.shutdown,
-                           wait_for_window=True, wait_for_profile=True):
+    # Releasing the connection leaves the Dragon process alone, so a Dragon
+    # that is still up has its profile loaded already. Waiting for the log to
+    # announce a profile load that will never happen again costs the full
+    # 30s timeout on every reclaim. Only wait when Dragon is not up yet --
+    # it restarted while we were released, and the profile really is coming.
+    dragon_was_running = is_dragon_running()
+    if not _probe_and_wait(launcher.shutdown, wait_for_window=True,
+                           wait_for_profile=not dragon_was_running):
         log.info("Activate: shutdown requested while waiting for Dragon")
         return
     if _connect(natlink, launcher.discovered):

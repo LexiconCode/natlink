@@ -121,17 +121,38 @@ class TestDeactivateOnMain(_InactiveTestBase):
 
 class TestActivateOnMain(_InactiveTestBase):
 
-    def _run(self, launcher, connect_ok=True, probe_ok=True, state=None):
+    def _run(self, launcher, connect_ok=True, probe_ok=True, state=None,
+             dragon_running=True):
         from natlink_compat import _launcher
 
         with patch("natlink_compat._ui_protocol.set_phase") as set_phase, \
+             patch("natlink_com._win32.is_dragon_running",
+                   return_value=dragon_running), \
              patch("natlink_compat._ui_protocol.notify_text"), \
-             patch.object(_launcher, "_probe_and_wait", return_value=probe_ok), \
+             patch.object(_launcher, "_probe_and_wait",
+                          return_value=probe_ok) as probe, \
              patch.object(_launcher, "_connect", return_value=connect_ok) as connect, \
              patch.object(_launcher, "_start_monitor_if_needed") as monitor, \
              patch("natlink_compat._state._state", state or self._state()):
             _launcher._do_activate_on_main(launcher, MagicMock())
+        self.probe = probe
         return set_phase, connect, monitor
+
+    def test_running_dragon_skips_the_profile_wait(self):
+        """Regression: reclaiming used to stall a full 30s.
+
+        _wait_for_profile_via_log waits for a *new* "Normal mode" line in
+        Dragon's log. Releasing the connection never stops Dragon, so its
+        profile stays loaded and that line never comes again — the wait ran
+        to its 30s timeout, returned False, and connected anyway.
+        """
+        self._run(self._launcher(inactive=True), dragon_running=True)
+        self.assertIs(self.probe.call_args.kwargs["wait_for_profile"], False)
+
+    def test_restarted_dragon_still_waits_for_the_profile(self):
+        """Dragon came back while we were released — the profile is loading."""
+        self._run(self._launcher(inactive=True), dragon_running=False)
+        self.assertIs(self.probe.call_args.kwargs["wait_for_profile"], True)
 
     def test_reconnects_and_leaves_inactive(self):
         launcher = self._launcher(inactive=True)
