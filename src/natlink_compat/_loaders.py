@@ -337,6 +337,9 @@ def remove_loader(loaders):
         if _find_entry(loader) is None:
             continue
         stop_loader(loader)
+        # Backstop after the framework's own teardown: release only what is
+        # demonstrably this loader's and was not cleaned up.
+        release_objects_for(loader)
         _unregister(loader)
         log.info("Loader removed: %s", _loader_name(loader))
     _on_loaders_changed()
@@ -452,11 +455,17 @@ def get_dictation_objects_for(loader):
 def release_objects_for(loader):
     """Unload *loader*'s grammars and destroy its dictation objects.
 
-    Opt-in, and deliberately not called by ``remove_loader``: frameworks are
-    authoritative for their own cleanup (see ``stop_loader``), and guessing on
-    their behalf is pinned against by two tests. This exists for the cases
-    that contract does not cover -- a loader with no ``stop()``, one whose
-    teardown raised, or a caller that wants to verify nothing was left behind.
+    Called by ``remove_loader`` after the framework's own ``stop()`` has run,
+    so it only ever acts on what that teardown left behind. A framework that
+    cleans up properly makes this a no-op.
+
+    This does not conflict with "frameworks are authoritative for their own
+    cleanup". That contract exists so natlink does not *guess* -- see
+    ``_remove_callbacks_for``, which falls back to inference and could take
+    another loader's callbacks. Objects do not need guessing: each records the
+    loader it was created under, and unattributed objects are never touched.
+    Leaving a removed loader's grammars loaded is not neutral -- Dragon keeps
+    recognising them, so the user disables a loader and its commands still fire.
 
     ``deactivate()`` is not enough for dictation objects: Dragon holds every
     reference until ``destroy()``.
@@ -478,7 +487,8 @@ def release_objects_for(loader):
             log.debug("releasing dictation object for %s failed",
                       _loader_name(loader), exc_info=True)
     if grams or dicts:
-        log.info("Released %d grammar(s) and %d dictation object(s) for %s",
+        # Reaching here means the loader's own teardown left these behind.
+        log.info("Released %d grammar(s) and %d dictation object(s) left by %s",
                  len(grams), len(dicts), _loader_name(loader))
     return len(grams), len(dicts)
 

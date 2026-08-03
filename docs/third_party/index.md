@@ -216,10 +216,17 @@ Objects created outside any loader — a user script at the REPL, say — are
 unattributed and are never returned.
 
 `release_objects_for(loader)` unloads a loader's grammars and destroys its
-dictation objects. It is **opt-in and not called by `remove_loader()`**:
-frameworks are authoritative for their own teardown. Use it for the cases
-that contract does not cover — a loader with no `stop()`, one whose teardown
-raised, or to verify nothing was left behind.
+dictation objects. `remove_loader()` calls it **after** your `stop()` has run,
+so it only ever acts on what your teardown left behind — clean up properly and
+it does nothing.
+
+That is not a contradiction of "frameworks are authoritative for their own
+cleanup". That rule exists so natlink does not *guess*: callback ownership is
+partly inferred, and guessing could remove another loader's callbacks. Objects
+need no guessing — each records the loader it was created under, and
+unattributed objects are never touched. Leaving a removed loader's grammars
+loaded is not neutral: Dragon keeps recognising them, so a user who disables a
+loader still gets its commands.
 
 Note `deactivate()` is not enough for a dictation object: Dragon holds every
 reference until `destroy()`.

@@ -626,3 +626,52 @@ class TestPerLoaderObjectAttribution(unittest.TestCase):
         with owner_context("loader_alpha"):
             self.assertEqual(current_owner_package(), "loader_alpha")
         self.assertIsNone(current_owner_package())
+
+    def test_remove_loader_releases_objects_the_framework_left(self):
+        """Removing a loader must not leave its grammars loaded in Dragon.
+
+        The "frameworks are authoritative for their own cleanup" contract is
+        about not *guessing* -- _remove_callbacks_for infers ownership and
+        could take another loader's callbacks. Objects record their owner, so
+        there is nothing to guess, and leaving them loaded is user-visible:
+        Dragon keeps recognising a disabled loader's commands.
+        """
+        import types
+        from natlink_compat._loaders import _register, remove_loader
+
+        loader = types.ModuleType("loader_alpha")
+        loader.stop = lambda: None          # a framework that cleans up nothing
+        _register(loader, "loader_alpha", started=True)
+
+        mine = self._Fake("loader_alpha")
+        theirs = self._Fake("loader_beta")
+        self._state.grammar_registry[1] = mine
+        self._state.grammar_registry[2] = theirs
+
+        remove_loader(loader)
+
+        self.assertTrue(mine.unloaded,
+                        "removed loader's grammar was left loaded in Dragon")
+        self.assertFalse(theirs.unloaded,
+                         "removing one loader released another's grammar")
+
+    def test_remove_loader_is_a_noop_when_the_framework_cleaned_up(self):
+        """A well-behaved framework leaves nothing, so the backstop does nothing."""
+        import types
+        from natlink_compat._loaders import _register, remove_loader
+
+        loader = types.ModuleType("loader_tidy")
+        released = []
+
+        def _stop():
+            # Framework unloads its own grammar, as it should.
+            obj = self._state.grammar_registry.pop(1, None)
+            released.append(obj)
+
+        loader.stop = _stop
+        _register(loader, "loader_tidy", started=True)
+        self._state.grammar_registry[1] = self._Fake("loader_tidy")
+
+        remove_loader(loader)
+        self.assertEqual(len(released), 1)
+        self.assertEqual(list(self._state.grammar_registry), [])
