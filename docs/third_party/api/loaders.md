@@ -27,6 +27,12 @@ third-party grammar loaders.
 
 ::: natlink.get_running_loaders
 
+::: natlink.get_grammars_for
+
+::: natlink.get_dictation_objects_for
+
+::: natlink.release_objects_for
+
 ## `ensure_natlinkcore_logging`
 
 ::: natlink.ensure_natlinkcore_logging

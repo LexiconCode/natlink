@@ -546,3 +546,83 @@ class TestFailurePathsAreSafe(unittest.TestCase):
                              "create() made a second window, orphaning the first")
         finally:
             _hidden_wnd.destroy()
+
+
+class TestPerLoaderObjectAttribution(unittest.TestCase):
+    """Callbacks and timers were owner-tagged, but grammars and dictation
+    objects were not, so nothing could answer "which objects belong to this
+    loader" -- even though Dragon permits releasing them individually.
+    """
+
+    def setUp(self):
+        from natlink_compat._state import _state
+        self._state = _state
+        self._saved = dict(_state.grammar_registry), dict(_state.dict_registry)
+        _state.grammar_registry.clear()
+        _state.dict_registry.clear()
+
+    def tearDown(self):
+        self._state.grammar_registry.clear()
+        self._state.dict_registry.clear()
+
+    class _Fake:
+        """Stands in for a compat GramObj/DictObj in the registry."""
+        def __init__(self, owner):
+            self._owner_pkg = owner
+            self.unloaded = False
+            self.destroyed = False
+
+        def unload(self):
+            self.unloaded = True
+
+        def destroy(self):
+            self.destroyed = True
+
+    def _loader(self, pkg):
+        # A real module loader, not a MagicMock: _loader_package prefers
+        # __module__, which on a mock is "unittest.mock".
+        import types
+        return types.ModuleType(pkg)
+
+    def test_objects_are_attributed_to_the_owning_loader(self):
+        from natlink_compat._loaders import (get_grammars_for,
+                                             get_dictation_objects_for)
+        a, b = self._Fake("loader_alpha"), self._Fake("loader_beta")
+        self._state.grammar_registry[1] = a
+        self._state.grammar_registry[2] = b
+        d = self._Fake("loader_alpha")
+        self._state.dict_registry[3] = d
+
+        alpha = self._loader("loader_alpha")
+        self.assertEqual(get_grammars_for(alpha), [a])
+        self.assertEqual(get_dictation_objects_for(alpha), [d])
+
+    def test_unattributed_objects_belong_to_nobody(self):
+        """A grammar made outside any loader must not be swept up."""
+        from natlink_compat._loaders import get_grammars_for
+        orphan = self._Fake(None)
+        self._state.grammar_registry[1] = orphan
+        self.assertEqual(get_grammars_for(self._loader("loader_alpha")), [])
+
+    def test_release_touches_only_the_named_loader(self):
+        from natlink_compat._loaders import release_objects_for
+        mine, theirs = self._Fake("loader_alpha"), self._Fake("loader_beta")
+        mine_dict = self._Fake("loader_alpha")
+        self._state.grammar_registry[1] = mine
+        self._state.grammar_registry[2] = theirs
+        self._state.dict_registry[3] = mine_dict
+
+        n_gram, n_dict = release_objects_for(self._loader("loader_alpha"))
+        self.assertEqual((n_gram, n_dict), (1, 1))
+        self.assertTrue(mine.unloaded)
+        self.assertTrue(mine_dict.destroyed,
+                        "dictation objects need destroy(); deactivate() "
+                        "releases nothing")
+        self.assertFalse(theirs.unloaded, "released another loader's grammar")
+
+    def test_owner_context_attributes_creations(self):
+        from natlink_compat._callbacks import owner_context, current_owner_package
+        self.assertIsNone(current_owner_package())
+        with owner_context("loader_alpha"):
+            self.assertEqual(current_owner_package(), "loader_alpha")
+        self.assertIsNone(current_owner_package())

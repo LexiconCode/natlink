@@ -146,7 +146,10 @@ def dispatch_begin_callback(module_info):
     with _callback_trace("begin"):
         for cb in list(_state.begin_callbacks):
             try:
-                _entry_fn(cb)(module_info)
+                # natlinkcore reloads grammars from its begin callback, so
+                # objects created here belong to that loader.
+                with owner_context(_entry_owner(cb)):
+                    _entry_fn(cb)(module_info)
             except Exception:
                 log.exception("Error in begin callback")
 
@@ -410,6 +413,28 @@ def loader_registration(loader):
     """
     prev = _state.registering_loader
     _state.registering_loader = _loader_package(loader) or None
+    try:
+        yield
+    finally:
+        _state.registering_loader = prev
+
+
+def current_owner_package():
+    """Loader package currently being started, reloaded, or dispatched into.
+
+    Grammars and dictation objects are created by a loader's grammar modules,
+    so this is the only reliable attribution: those modules are imported as
+    top-level modules, and inferring from the call stack would name the
+    grammar module rather than the loader that loaded it.
+    """
+    return _state.registering_loader
+
+
+@contextmanager
+def owner_context(pkg):
+    """Attribute objects created inside this block to *pkg*."""
+    prev = _state.registering_loader
+    _state.registering_loader = pkg or prev
     try:
         yield
     finally:

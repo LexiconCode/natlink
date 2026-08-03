@@ -204,6 +204,26 @@ engine that does not exist yet.
 The tray and state snapshots report the second. A loader added before connect
 therefore appears registered but not running until the connection comes up.
 
+### Which objects belong to a loader
+
+Grammars and dictation objects are attributed to whichever loader was
+starting, reloading, or being dispatched into when they were created:
+
+- `get_grammars_for(loader)`
+- `get_dictation_objects_for(loader)`
+
+Objects created outside any loader — a user script at the REPL, say — are
+unattributed and are never returned.
+
+`release_objects_for(loader)` unloads a loader's grammars and destroys its
+dictation objects. It is **opt-in and not called by `remove_loader()`**:
+frameworks are authoritative for their own teardown. Use it for the cases
+that contract does not cover — a loader with no `stop()`, one whose teardown
+raised, or to verify nothing was left behind.
+
+Note `deactivate()` is not enough for a dictation object: Dragon holds every
+reference until `destroy()`.
+
 ### Validating a loader
 
 `add_loader()` accepts anything with `start()` **or** `run()`. Use

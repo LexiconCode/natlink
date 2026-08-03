@@ -223,3 +223,51 @@ class TestConnectRollback:
         # The live session must be unaffected.
         assert _state.connected
         assert natlink.getMicState() in ("on", "off", "sleeping")
+
+
+@pytest.mark.online
+class TestPerLoaderRelease:
+    """Attribution plus the measured release behaviour: a loader's objects can
+    be enumerated and released without touching another loader's.
+    """
+
+    def test_release_objects_for_drops_only_that_loaders_refs(self, live_connection):
+        import types
+        import natlink_compat as natlink
+        from natlink_compat._callbacks import owner_context
+        from natlink_compat._loaders import (get_grammars_for,
+                                             release_objects_for)
+
+        alpha = types.ModuleType("loader_alpha")
+        beta = types.ModuleType("loader_beta")
+
+        # Grammars created inside a loader's context are attributed to it,
+        # exactly as they are during start()/reload or a begin callback.
+        with owner_context("loader_alpha"):
+            a = natlink.GramObj()
+            a.load(compile_grammar("<ra> exported = attribution alpha probe;"))
+            a.activate("ra", 0)
+        with owner_context("loader_beta"):
+            b = natlink.GramObj()
+            b.load(compile_grammar("<rb> exported = attribution bravo probe;"))
+            b.activate("rb", 0)
+
+        sink_a, sink_b = a._com_gram._sink, b._com_gram._sink
+        try:
+            assert get_grammars_for(alpha) == [a]
+            assert get_grammars_for(beta) == [b]
+            b_before = _rc(sink_b)
+
+            n_gram, n_dict = release_objects_for(alpha)
+            _drain()
+
+            assert n_gram == 1
+            assert _rc(sink_a) == 0, "alpha's grammar was not released"
+            assert _rc(sink_b) == b_before, "beta's grammar was disturbed"
+            assert get_grammars_for(alpha) == [], "registry still lists alpha's"
+        finally:
+            for g in (a, b):
+                try:
+                    g.unload()
+                except Exception:
+                    pass

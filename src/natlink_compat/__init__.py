@@ -149,7 +149,9 @@ def run():
 
 
 from ._loaders import (add_loader, remove_loader, reload_loader,
-                       get_loaders, get_running_loaders)
+                       get_loaders, get_running_loaders,
+                       get_grammars_for, get_dictation_objects_for,
+                       release_objects_for)
 # Re-exports of natlink_com seams so the UI imports through the compat layer
 # rather than reaching into natlink_com directly (preserves the layer boundary).
 from natlink_com import (
@@ -214,6 +216,8 @@ __all__ = [
     # Loader management
     "LoaderProtocol", "is_loader", "add_loader", "remove_loader",
     "reload_loader", "get_loaders", "get_running_loaders",
+    "get_grammars_for", "get_dictation_objects_for",
+    "release_objects_for",
     # natlink_com seams re-exported for the UI layer
     "msgbox", "MB_ICONERROR", "MB_ICONWARNING", "MB_ICONQUESTION", "MB_YESNO",
     "IDYES", "IDNO", "IniFile", "print_config", "request_shutdown",

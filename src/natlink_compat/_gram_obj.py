@@ -56,6 +56,12 @@ class GramObj:
         )
         self._all_results = bool(allResults)
 
+        # Attribute to the loader whose start/reload/callback we are inside,
+        # so a loader's objects can be enumerated (see loaders.get_grammars_for).
+        # None when created outside any loader — e.g. a user script at the REPL.
+        from ._callbacks import current_owner_package
+        self._owner_pkg = current_owner_package()
+
         # Register in global grammar registry so callbacks can find us
         with _state.lock:
             _state.grammar_registry[self._com_gram.handle] = self

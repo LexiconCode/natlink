@@ -33,6 +33,8 @@ class DictObj:
                 from ._exceptions import WrongState
                 raise WrongState("natlink is not connected")
             self._com_dict = _com_call("DictObj.create", backend.create_dictation)
+            from ._callbacks import current_owner_package
+            self._owner_pkg = current_owner_package()
             _state.dict_registry[self._com_dict.handle] = self
 
     def activate(self, window: int) -> None:

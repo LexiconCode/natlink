@@ -423,6 +423,66 @@ def get_loaders():
     return [e.loader for e in _state.loader_registry]
 
 
+def _objects_owned_by(pkg, registry):
+    with _state.lock:
+        return [o for o in registry.values()
+                if getattr(o, "_owner_pkg", None) == pkg]
+
+
+def get_grammars_for(loader):
+    """Grammars created while *loader* was starting, reloading, or dispatching.
+
+    Objects created outside any loader context are unattributed and never
+    returned here.
+    """
+    # Same notion of "package" callbacks use, so ownership agrees across both.
+    # Deferred: _callbacks imports this module (cycle: _loaders -> _callbacks).
+    from ._callbacks import _loader_package
+    pkg = _loader_package(loader)
+    return _objects_owned_by(pkg, _state.grammar_registry) if pkg else []
+
+
+def get_dictation_objects_for(loader):
+    """Dictation objects attributed to *loader*. See get_grammars_for."""
+    from ._callbacks import _loader_package
+    pkg = _loader_package(loader)
+    return _objects_owned_by(pkg, _state.dict_registry) if pkg else []
+
+
+def release_objects_for(loader):
+    """Unload *loader*'s grammars and destroy its dictation objects.
+
+    Opt-in, and deliberately not called by ``remove_loader``: frameworks are
+    authoritative for their own cleanup (see ``stop_loader``), and guessing on
+    their behalf is pinned against by two tests. This exists for the cases
+    that contract does not cover -- a loader with no ``stop()``, one whose
+    teardown raised, or a caller that wants to verify nothing was left behind.
+
+    ``deactivate()`` is not enough for dictation objects: Dragon holds every
+    reference until ``destroy()``.
+
+    Returns ``(grammars_released, dictation_released)``.
+    """
+    grams = get_grammars_for(loader)
+    dicts = get_dictation_objects_for(loader)
+    for g in grams:
+        try:
+            g.unload()
+        except Exception:
+            log.debug("releasing grammar for %s failed", _loader_name(loader),
+                      exc_info=True)
+    for d in dicts:
+        try:
+            d.destroy()
+        except Exception:
+            log.debug("releasing dictation object for %s failed",
+                      _loader_name(loader), exc_info=True)
+    if grams or dicts:
+        log.info("Released %d grammar(s) and %d dictation object(s) for %s",
+                 len(grams), len(dicts), _loader_name(loader))
+    return len(grams), len(dicts)
+
+
 def get_running_loaders():
     """Loaders whose start()/run() has actually been called."""
     return [e.loader for e in _state.loader_registry if e.started]
