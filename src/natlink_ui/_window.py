@@ -28,6 +28,7 @@ from ._win32 import (
     WS_OVERLAPPEDWINDOW, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
     SW_SHOW, SW_HIDE,
 )
+from . import _dpi
 
 log = logging.getLogger("natlink.ui.window")
 
@@ -115,6 +116,9 @@ def _safe_call(fn, args):
 def _ui_thread_run():
     global _thread_id
     _thread_id = kernel32.GetCurrentThreadId()
+
+    # Before the first window: Windows locks process awareness once one exists.
+    log.debug("DPI awareness: %s", _dpi.set_process_dpi_aware())
 
     import faulthandler as _fh
     try:
@@ -274,7 +278,8 @@ def _create_circle_icon(r, g, b, size=16):
         pen = gdi32.CreatePen(0, 1, color >> 1 & 0x7F7F7F)
         oldBrush = gdi32.SelectObject(hdcMem, brush)
         oldPen = gdi32.SelectObject(hdcMem, pen)
-        gdi32.Ellipse(hdcMem, 2, 2, size - 2, size - 2)
+        inset = max(1, round(size / 8))  # 2px at 16px, proportional above
+        gdi32.Ellipse(hdcMem, inset, inset, size - inset, size - inset)
         gdi32.SelectObject(hdcMem, oldBrush)
         gdi32.SelectObject(hdcMem, oldPen)
         gdi32.DeleteObject(brush)
@@ -287,7 +292,7 @@ def _create_circle_icon(r, g, b, size=16):
         gdi32.DeleteObject(white)
         black = gdi32.CreateSolidBrush(0)
         oldBrushMask = gdi32.SelectObject(hdcMask, black)
-        gdi32.Ellipse(hdcMask, 2, 2, size - 2, size - 2)
+        gdi32.Ellipse(hdcMask, inset, inset, size - inset, size - inset)
         gdi32.SelectObject(hdcMask, oldBrushMask)
         gdi32.DeleteObject(black)
         gdi32.SelectObject(hdcMem, oldBmpMem)
@@ -324,12 +329,20 @@ def _create_circle_icon(r, g, b, size=16):
 _ICON_CACHE = {}
 
 def _get_icon(name):
-    if name not in _ICON_CACHE:
+    """Tray icon at the size Windows asks for, not a fixed 16px.
+
+    SM_CXSMICON scales with DPI (24px at 150%), and the shell stretches
+    anything smaller. Keyed by size too, so a DPI change builds a new icon
+    rather than reusing the blurry one.
+    """
+    size = _dpi.small_icon_size()
+    key = (name, size)
+    if key not in _ICON_CACHE:
         colors = {"connected": (0, 180, 0), "disconnected": (180, 0, 0),
                   "error": (220, 180, 0)}
         rgb = colors.get(name, (128, 128, 128))
-        _ICON_CACHE[name] = _create_circle_icon(*rgb)
-    return _ICON_CACHE[name]
+        _ICON_CACHE[key] = _create_circle_icon(*rgb, size=size)
+    return _ICON_CACHE[key]
 
 
 def _destroy_icon_cache():
@@ -369,6 +382,10 @@ class NatlinkWindow:
 
     def __init__(self, title="Natlink Messages", width=800, height=500,
                  load_config=None, save_config=None):
+        # Must precede the geometry maths below: an unaware process is told
+        # every monitor is 96 DPI, so scaling computed first would be a no-op.
+        _dpi.set_process_dpi_aware()
+
         # Window state
         self._hwnd = None
         self._edit = None
@@ -397,9 +414,14 @@ class NatlinkWindow:
         self._menu_callbacks = {}
         self._menu_id_max = _IDM_BASE
 
-        # Load saved geometry / topmost (single config read)
+        # Load saved geometry / topmost (single config read).
+        # Defaults are 96-DPI design sizes, so scale them for the display they
+        # will open on. Saved values are already physical pixels and carry the
+        # position that picks the monitor — rescaling those would compound.
         cfg = load_config() if load_config else None
-        x, y, w, h = self._load_geometry(100, 100, width, height, cfg)
+        def_dpi = _dpi.dpi_for_point(100, 100)
+        x, y, w, h = self._load_geometry(
+            100, 100, _dpi.scale(width, def_dpi), _dpi.scale(height, def_dpi), cfg)
         self._x = x
         self._y = y
         self._width = w
@@ -680,6 +702,29 @@ class NatlinkWindow:
                 self._hwnd, wt.HWND(-1 if self._topmost else -2),
                 0, 0, 0, 0, 0x0003)  # SWP_NOSIZE | SWP_NOMOVE
 
+    def _apply_font(self):
+        """(Re)create the RichEdit font at the current monitor's DPI.
+
+        Called on creation and again on WM_DPICHANGED — the font is sized in
+        physical pixels, so it does not follow the window across monitors on
+        its own. The old handle is freed after the control has switched to
+        the new one; deleting a font still selected into a control leaks it.
+        """
+        if not self._edit:
+            return
+        font_size = self._load_font_size()
+        dpi = _dpi.dpi_for_window(self._hwnd)
+        previous = self._font
+        self._font = gdi32.CreateFontW(
+            _dpi.scale(font_size, dpi), 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0,
+            0x31, "Consolas")
+        if not self._font:
+            self._font = previous
+            return
+        user32.SendMessageW(self._edit, WM_SETFONT, self._font, 1)
+        if previous:
+            gdi32.DeleteObject(previous)
+
     # ------------------------------------------------------------------
     # Internals — geometry persistence
     # ------------------------------------------------------------------
@@ -776,6 +821,24 @@ class NatlinkWindow:
                 cb = self._menu_callbacks.get(cmd_id)
                 if cb:
                     _dispatch_async(cb)
+            return 0
+
+        # --- DPI ---
+        if msg == _dpi.WM_DPICHANGED:
+            # The window moved to a monitor with a different scale factor.
+            # lParam is Windows' suggested rect for the new DPI; using it
+            # verbatim is what keeps the window the same *apparent* size and
+            # stops it drifting under the cursor mid-drag. Ignoring this
+            # message is what makes a per-monitor-aware app misbehave on
+            # mixed-DPI setups — worse than staying unaware.
+            suggested = ctypes.cast(ctypes.c_void_p(lparam),
+                                    ctypes.POINTER(wt.RECT)).contents
+            user32.SetWindowPos(
+                hwnd, None, suggested.left, suggested.top,
+                suggested.right - suggested.left,
+                suggested.bottom - suggested.top,
+                0x0004 | 0x0010)  # SWP_NOZORDER | SWP_NOACTIVATE
+            self._apply_font()
             return 0
 
         # --- Output messages ---
@@ -886,13 +949,7 @@ class NatlinkWindow:
             self._hwnd, None, self._hinstance, None)
         if self._edit:
             user32.SendMessageW(self._edit, EM_SETBKGNDCOLOR, 0, _CLR_BACKGROUND)
-            font_size = self._load_font_size()
-            dpi = user32.GetDpiForSystem() or 96
-            font_height = round(font_size * dpi / 96)
-            self._font = gdi32.CreateFontW(
-                font_height, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0x31, "Consolas")
-            if self._font:
-                user32.SendMessageW(self._edit, WM_SETFONT, self._font, 1)
+            self._apply_font()
         self._created = True
         if self._topmost:
             self._apply_topmost()
