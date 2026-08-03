@@ -262,6 +262,68 @@ marshaling break); mimic retry-on-paused-race; extra vocabulary enumeration APIs
 7. **Live-verify P0-1** (choice-0 `dwWordNum` vs `dwCFGParse`) — still outstanding; needs a
    working Dragon COM connection. Probe script exists and is ready to run.
 
+## Version dispatch across four Dragon versions
+
+Dragon ships in four supported majors — **DNS 13, DPI 14, DPI 15, DPI 16** — and the repo carries
+two IDL/TLB/marshal variants. The history shows the grouping is **inherited and empirically
+grounded**, not invented here:
+
+- **2015-11-05 `952086f`** (quintijn) — DNS 14 support in the original natlink was a **three-line
+  change**: add the install path, add `14` to the version list. No interface change. 13 and 14 are
+  interface-identical.
+- **2021-10-19 `be1d962`** (fusentasticus) — the C++ build began producing **two** pyd variants,
+  `natlink1314_pyd` (`DRAGON_VERSION=1314`) and `natlink15_pyd` (`DRAGON_VERSION=15`), with the
+  installer picking one. The `{13,14}` vs `{15,…}` split originates here.
+- **2023-03-06 `d9ddaf3`** — renamed the macro to `LEGACY`, and extended the non-legacy build to
+  cover DPI 16 ("define filename for Dragon 15, 16 pyd").
+
+**What the split actually tracks.** The only version conditional in the entire C++ header set is a
+single struct field:
+
+```c
+#if LEGACY == 0   //  DPI => v15
+    QWORD   qwSilenceDuration;
+#endif
+```
+
+in the word-node struct (`dspeech.h:304`, `speech.h:573`). That is the whole basis for `v13_v14`
+vs `v15_v16`, and it is a sound one.
+
+**Corrected: DPI 15 does *not* issue malformed calls.** An earlier revision of this document
+claimed DPI 15 lands in an "impossible cell" producing a `TypeError`, because the TLB/marshal
+split is at 15 while `supports_dw_notify` splits at 16. **That was wrong and is retracted.**
+Measured against live Dragon 13, comtypes accepts the required `[in]` params and optionally the
+`[out]` slot:
+
+| variant | `PlayString` | accepted arg counts |
+|---|---|---|
+| v13_v14 | 4 `in` + 1 `out` | 4 or 5 (6 → TypeError) |
+| v15_v16 | 5 `in` + 1 `out` | 5 or 6 |
+
+`_speech_ops.py:199` passes **5** on the legacy branch, which is valid for both variants — and on
+v15_v16 the 5th argument binds to `p5` (`dwNotify`) as `0`, i.e. exactly the fire-and-forget
+behaviour that branch intends. `:195` passes **6** on the dwNotify branch, valid only on v15_v16,
+which is the only variant that branch can reach. All four versions are consistent.
+
+**What remains genuinely open:**
+
+1. **The two IDLs contradict each other on when `dwNotify` appeared.**
+   `dragon_interfaces_v13_v14.idl:9` says "no dwNotify — **added in DNS 15**";
+   `dragon_interfaces_v15_v16.idl:4` says "includes dwNotify … **for DNS 16+**";
+   `_connection.py:769-771` says DNS 15 has it in the TLB but ignores it. The SDK header
+   (`dspeech.h:456`) declares `PlayString` with **no** `dwNotify` for every version, and the
+   v15_v16 IDL notes the extra parameter is "not in SDK headers" — so it was reverse-engineered.
+   At most one comment is right; nothing in the repo resolves it, and it needs DPI 15/16 hardware.
+2. **DPI 15 on Windows 10+ never uses Dragon's own PlayString.** `_use_sendinput`
+   (`_speech_ops.py:155-159`) returns True for any non-16 Dragon on Win10+, so 15 always routes
+   through SendInput. That substitution was reasoned about for DNS 13's blocked journal hooks; it
+   was never decided for 15, it just falls out of `supports_dw_notify` doubling as "is this 16".
+3. **One boolean answers three questions** — TLB arity, whether Dragon honours dwNotify, and
+   whether the OS needs the SendInput workaround. The arity coincidence above is load-bearing but
+   undocumented: the same source line means "fill the out slot" on v13_v14 and "dwNotify=0" on
+   v15_v16. A `DragonProfile` naming the three separately would make that explicit rather than
+   incidental.
+
 ## Still-open investigation threads
 
 - **P0-1 live verification — BLOCKED on environment, not on the probe.** The probe is written and
