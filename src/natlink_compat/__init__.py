@@ -123,15 +123,18 @@ def get_dragon_log_dir():
     """Return the most relevant Dragon log directory, or None."""
     import os
 
+    from natlink_com._launcher import dragon_log_dir, find_dragon_log
+
     cfg = load_config()
     version = cfg.get("dragon", "version", fallback="16")
-    base = get_programdata_dir() / "Nuance" / f"NaturallySpeaking{version}" / "logs"
+    base = dragon_log_dir(version)
     if not base.is_dir():
         return None
-    for entry in base.iterdir():
-        if (entry / "Dragon.log").is_file():
-            return entry
-    return base
+    # Newest, not first: directory order puts the install-time SYSTEM log
+    # ahead of the live profile one, so opening "the Dragon log" handed the
+    # user a file that had not changed since installation.
+    newest = find_dragon_log(version)
+    return newest.parent if newest else base
 
 
 def get_programdata_dir():

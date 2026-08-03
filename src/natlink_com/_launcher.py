@@ -183,11 +183,50 @@ def _poll_for_dragon_window(h_shutdown=None, h_restart=None):
 # Wait for Dragon profile to be loaded (via log monitoring)
 # ---------------------------------------------------------------------------
 
+def dragon_log_dir(version):
+    """Root of Dragon's per-profile log tree for a major version."""
+    return (Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"))
+            / "Nuance" / f"NaturallySpeaking{version}" / "logs")
+
+
+def find_dragon_log(version):
+    """Newest Dragon.log across profile subdirectories, or None.
+
+    Dragon keeps one subdirectory per profile plus a SYSTEM directory
+    written once at install time. Taking the first match in directory order
+    picks SYSTEM -- it sorts before real profile names and its Dragon.log
+    never changes again, so a watcher on it can never observe anything.
+    Most-recently-modified is the one Dragon is actually using.
+    """
+    base = dragon_log_dir(version)
+    if not base.is_dir():
+        log.debug("Dragon log dir not found: %s", base)
+        return None
+
+    newest = None
+    newest_mtime = -1.0
+    for entry in base.iterdir():
+        candidate = entry / "Dragon.log"
+        try:
+            if not candidate.is_file():
+                continue
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest_mtime:
+            newest, newest_mtime = candidate, mtime
+    return newest
+
+
 def _wait_for_profile_via_log(max_wait=30):
     """Wait for Dragon to fully load the profile by monitoring its log.
 
     Watches Dragon's log for 'updateModesMenu ... Normal mode' which
     signals the profile is loaded and Dragon is ready for voice commands.
+
+    Returns False if the marker does not arrive. Note that Dragon only
+    writes this log while its DragonLoggerService is running; with the
+    service stopped there is nothing to observe and this always times out.
     """
     try:
         from ._config import load_config
@@ -196,19 +235,9 @@ def _wait_for_profile_via_log(max_wait=30):
     except Exception:
         version = "16"
 
-    log_dir = Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData")) / "Nuance" / f"NaturallySpeaking{version}" / "logs"
-    if not log_dir.is_dir():
-        log.debug("Dragon log dir not found: %s", log_dir)
-        return False
-
-    dragon_log = None
-    for entry in log_dir.iterdir():
-        candidate = entry / "Dragon.log"
-        if candidate.is_file():
-            dragon_log = candidate
-            break
+    dragon_log = find_dragon_log(version)
     if not dragon_log:
-        log.debug("Dragon.log not found in %s", log_dir)
+        log.debug("Dragon.log not found under %s", dragon_log_dir(version))
         return False
 
     try:
