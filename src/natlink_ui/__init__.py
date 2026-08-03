@@ -317,6 +317,10 @@ class UIProvider:
             ("Auto-launch Dragon", lambda: natlink_compat.toggle_auto_launch(), lambda: natlink_compat.is_auto_launch_enabled()),
             ("Show Messages on Startup", self._toggle_show_messages, self._is_show_messages_enabled),
             ("Show on Error", self._toggle_show_on_error, self._is_show_on_error_enabled),
+            # Unlike its neighbours this is runtime state, not a persisted
+            # setting: it hands the single Dragon connection to another
+            # process and is dropped on restart.
+            ("Release Dragon", self._toggle_inactive, self._is_inactive),
         ])
 
         w.add_separator()
@@ -331,7 +335,6 @@ class UIProvider:
                 natlink_compat.start_dragon()
 
         w.add_menu_item(_dragon_label, _dragon_action)
-        w.add_menu_item("Inactive (release Dragon)", self._toggle_inactive, self._is_inactive)
         w.add_menu_item("Exit", lambda: natlink_compat.exit_natlink())
 
 

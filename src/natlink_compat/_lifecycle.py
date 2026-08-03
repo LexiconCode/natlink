@@ -135,7 +135,7 @@ def _establish_com_connection():
     # and freeze Dragon. If the NatlinkConnectionActive mutex already exists,
     # another process (a second natlink, a standalone loader, or the test
     # suite) owns the connection; refuse rather than corrupt event ordering.
-    # The owner releases it via natDisconnect (tray menu > Inactive).
+    # The owner releases it via natDisconnect (tray Configure > Release Dragon).
     # A handle still sitting here means a previous teardown did not run to
     # completion (_state.reset closes it). Release it before creating a new
     # one: otherwise CreateMutexW returns a *second* handle to the same named
@@ -153,7 +153,8 @@ def _establish_com_connection():
         from ._exceptions import ConnectionInUse
         raise ConnectionInUse(
             "Another process is already connected to Dragon. Release that "
-            "connection (natlink tray menu > Inactive, or call natDisconnect) "
+            "connection (natlink tray menu > Configure > Release Dragon, or "
+            "call natDisconnect) "
             "before connecting.")
     _state._conn_mutex = handle
 
@@ -276,7 +277,8 @@ def natConnect(bUseThreads: bool = False, *,
             # (issue #228). A loader/framework calling natConnect() must not
             # tear down and rebuild it — that would drop every other loader's
             # grammars and callbacks. Hand back a no-op handle; the real
-            # connection lives until launcher teardown or tray > Inactive.
+            # connection lives until launcher teardown or
+            # tray Configure > Release Dragon.
             log.debug("natConnect: launcher already connected — returning "
                       "no-op handle")
             return contextlib.nullcontext()
@@ -317,7 +319,7 @@ def natDisconnect() -> None:
     """
     if _state.launcher_active:
         log.debug("natDisconnect: ignored — launcher owns the connection "
-                  "(release Dragon via the tray 'Inactive' item)")
+                  "(use tray Configure > Release Dragon)")
         return
     _disconnect()
 
