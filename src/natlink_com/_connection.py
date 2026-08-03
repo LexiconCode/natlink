@@ -169,6 +169,23 @@ class DragonConnection:
         Args:
             register_marshal: If True, register custom marshal DLLs.
         """
+        # Acquisition is not atomic: by the time Register() runs we hold the
+        # site object, ~9 AddRef'd interface pointers and the hidden window.
+        # Without an unwind, a failure part-way leaves all of it alive with
+        # _state.backend never assigned, so natDisconnect is never reached and
+        # Dragon keeps the session open -- exactly what the unreleased-COM
+        # warning at shutdown reports.
+        try:
+            self._connect_impl(register_marshal)
+        except BaseException:
+            try:
+                self.disconnect()
+            except Exception:
+                log.debug("rollback after failed connect did not complete",
+                          exc_info=True)
+            raise
+
+    def _connect_impl(self, register_marshal: bool = True) -> None:
         _k32 = ctypes.windll.kernel32
 
         # STA (2) — COM callbacks serialized on main thread via message queue,

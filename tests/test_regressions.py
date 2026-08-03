@@ -8,6 +8,7 @@ existing suite.
 import gc
 import itertools
 import unittest
+import unittest.mock
 from unittest.mock import MagicMock
 
 import pytest
@@ -492,3 +493,56 @@ class TestLoaderProtocolMatchesReality(unittest.TestCase):
         import natlink
         for name in ("is_loader", "get_running_loaders", "LoaderProtocol"):
             self.assertTrue(hasattr(natlink, name), f"natlink.{name} missing")
+
+
+# ---------------------------------------------------------------------------
+# Failure paths must not poison the process
+# ---------------------------------------------------------------------------
+
+class TestFailurePathsAreSafe(unittest.TestCase):
+    """The connection mutex leak showed what this family costs: a cleanup path
+    that leaks or throws leaves the process permanently unable to reconnect.
+    """
+
+    def test_disconnect_reaches_reset_even_when_a_step_raises(self):
+        """_state.reset() clears the backend and closes the mutex.
+
+        If a teardown step raises on the way there, connected stays True and
+        the mutex stays held: the monitor re-signals dragon_exited forever and
+        every later natConnect fails with ConnectionInUse.
+        """
+        from natlink_compat import _lifecycle
+        from natlink_compat._state import _state
+
+        backend = MagicMock()
+        backend.conn = MagicMock()
+        _state.backend = backend
+        try:
+            with unittest.mock.patch.object(
+                    _lifecycle, "_disconnect_steps",
+                    side_effect=RuntimeError("Dragon vanished mid-teardown")):
+                with self.assertRaises(RuntimeError):
+                    _lifecycle._disconnect()
+            self.assertIsNone(_state.backend,
+                              "reset() was skipped, so connected stays True")
+            self.assertFalse(_state.connected)
+        finally:
+            _state.backend = None
+
+    def test_create_returns_the_existing_hidden_window(self):
+        """A second create() must not orphan the first window.
+
+        Reachable whenever a connect fails after create() and is retried; the
+        failure path does not destroy the window.
+        """
+        from natlink_com import _hidden_wnd
+
+        first = _hidden_wnd.create()
+        if not first:
+            self.skipTest("could not create a hidden window in this session")
+        try:
+            second = _hidden_wnd.create()
+            self.assertEqual(second, first,
+                             "create() made a second window, orphaning the first")
+        finally:
+            _hidden_wnd.destroy()

@@ -195,6 +195,14 @@ def create():
     """Create hidden window on main thread. Returns HWND or None."""
     global _class_registered, _wndproc_ref, _hwnd, _accepting
 
+    if _hwnd:
+        # Assigning over a live _hwnd would drop the only reference to the
+        # previous window, leaking it with no way to destroy it. Reachable
+        # whenever a connect fails after create() and is retried, since the
+        # failure path does not call destroy().
+        _accepting = True
+        return _hwnd
+
     hInstance = kernel32.GetModuleHandleW(None)
 
     # Win32 window APIs use handled SEH internally — faulthandler's

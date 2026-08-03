@@ -334,6 +334,20 @@ def _disconnect() -> None:
 
     log.info("natDisconnect: cleaning up...")
 
+    # Every step below is best-effort and _state.reset() runs in the finally.
+    # reset() is what clears the backend and closes the connection mutex, so a
+    # step raising on the way there would leave _state.connected True with the
+    # mutex still held: the monitor keeps re-signalling dragon_exited, every
+    # later natConnect fails with ConnectionInUse, and the process can never
+    # reconnect. Teardown must reach the end even when Dragon is already gone.
+    try:
+        _disconnect_steps(set_phase, PHASE_IDLE)
+    finally:
+        _state.reset()
+    log.info("natDisconnect: done")
+
+
+def _disconnect_steps(set_phase, PHASE_IDLE) -> None:
     # Reject new dispatches before stop_loaders()/set_phase so sink
     # callbacks fired during teardown unwind cleanly instead of racing
     # _queues.clear() in destroy().
@@ -354,7 +368,10 @@ def _disconnect() -> None:
             pass
 
     from ._loaders import stop_loaders
-    stop_loaders()
+    try:
+        stop_loaders()
+    except Exception:
+        log.debug("stop_loaders failed during disconnect", exc_info=True)
 
     from natlink_com._win32 import kernel32 as _k32
     _k32.SetEvent(_state._disconnect_event_handle)  # unblock waitForSpeech
@@ -380,13 +397,22 @@ def _disconnect() -> None:
     # Clear callback slots AFTER sinks are unregistered — between
     # unregister_sinks and this point, Dragon may still deliver in-flight
     # callbacks that need the slots to call Resume (preventing freeze).
-    _callbacks.unregister_all()
+    try:
+        _callbacks.unregister_all()
+    except Exception:
+        log.debug("unregister_all failed during disconnect", exc_info=True)
 
     # Flush logs and restore stdout/stderr before tearing down COM.
     from ._logging_setup import teardown_logging
-    teardown_logging()
+    try:
+        teardown_logging()
+    except Exception:
+        log.debug("teardown_logging failed during disconnect", exc_info=True)
 
-    _teardown_objects()
+    try:
+        _teardown_objects()
+    except Exception:
+        log.debug("_teardown_objects failed during disconnect", exc_info=True)
 
     if _state.backend is not None:
         try:
@@ -394,9 +420,7 @@ def _disconnect() -> None:
         except Exception:
             log.debug("Backend disconnect failed", exc_info=True)
 
-    # _state.reset() closes the connection mutex.
-    _state.reset()
-    log.info("natDisconnect: done")
+
 
 
 def isNatSpeakRunning() -> int:

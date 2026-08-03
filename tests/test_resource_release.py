@@ -189,3 +189,37 @@ class TestDictationSinkRelease:
         assert _rc(sink) == 0, (
             f"Dragon retained {_rc(sink)} refs after destroy() — dictation "
             f"objects cannot be reclaimed per-loader")
+
+
+@pytest.mark.online
+class TestConnectRollback:
+    """Acquisition is not atomic: by Register() the connection holds the site
+    object, ~9 AddRef'd interface pointers and the hidden window. Without an
+    unwind, a failure part-way leaves all of it alive while _state.backend is
+    never assigned, so natDisconnect never runs and Dragon keeps the session.
+    """
+
+    def test_failure_midway_releases_what_was_acquired(self, live_connection):
+        import natlink_compat as natlink
+        from natlink_compat._state import _state
+        from natlink_com._connection import DragonConnection
+
+        # Real acquisition against a live Dragon, made to fail at the last
+        # step -- after the interfaces and hidden window have been taken.
+        conn = DragonConnection()
+        import unittest.mock as mock
+        with mock.patch.object(
+                DragonConnection, "_try_qi",
+                side_effect=RuntimeError("injected failure mid-acquisition")):
+            with pytest.raises(Exception):
+                conn.connect(register_marshal=False)
+
+        # Whatever it managed to take must have been released.
+        assert not conn._raw_ptrs, (
+            f"{len(conn._raw_ptrs)} AddRef'd interface pointers survived a "
+            f"failed connect")
+        assert conn.central is None, "central interface retained after failure"
+
+        # The live session must be unaffected.
+        assert _state.connected
+        assert natlink.getMicState() in ("on", "off", "sleeping")
