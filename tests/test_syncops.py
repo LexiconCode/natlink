@@ -251,14 +251,32 @@ class TestInputFromFile:
         with pytest.raises(natlink.NatError):
             natlink.inputFromFile("C:\\nonexistent_test_audio_xyz.wav")
 
-    @pytest.mark.experimental
     def test_wav_completes(self, live_connection):
-        """inputFromFile with a real wav should return without error."""
+        """inputFromFile with a real wav returns promptly.
+
+        The duration is the assertion. This waited on an event nothing ever
+        signalled, so it could only ever burn its full 5-minute timeout and
+        raise -- and was marked experimental, which deselects it by default,
+        so the failure stayed hidden. A wall-clock bound is what catches that
+        class of regression; "returns without error" would not.
+        """
+        started = time.monotonic()
         natlink.inputFromFile(self._WAV)
+        elapsed = time.monotonic() - started
+        assert elapsed < 60, (
+            f"inputFromFile took {elapsed:.0f}s -- it is waiting on something "
+            f"that never fires and running out its timeout")
 
     @pytest.mark.experimental
     def test_getWave_from_audio(self, live_connection):
         """getWave returns audio bytes from a real recognition (not mimic).
+
+        Opt-in: unlike test_wav_completes, this depends on Dragon actually
+        recognising the WAV, which is not deterministic across a long session
+        -- it passes alone and in small groups but not reliably after the full
+        suite has run. That is what "experimental" is for. test_wav_completes
+        only measures that inputFromFile returns, so it stays in the default
+        suite where it guards the timeout regression.
 
         Loads a dictation grammar, plays a WAV via inputFromFile, and
         verifies the ResObj from the results callback has wave data.

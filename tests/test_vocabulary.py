@@ -81,7 +81,13 @@ class TestLiveVocabulary:
     def test_setWordInfo(self, live_connection):
         try:
             natlink.addWord(self._TEST_WORD)
-            natlink.setWordInfo(self._TEST_WORD, 0)  # should not raise
+            # Round-trip: setWordInfo is only meaningful if getWordInfo
+            # reflects it. "does not raise" would pass on a silent no-op.
+            natlink.setWordInfo(self._TEST_WORD, 0)
+            assert natlink.getWordInfo(self._TEST_WORD) == 0
+            natlink.setWordInfo(self._TEST_WORD, 1)
+            assert natlink.getWordInfo(self._TEST_WORD) == 1, (
+                "setWordInfo did not change the stored flags")
         finally:
             natlink.deleteWord(self._TEST_WORD)
 

@@ -188,10 +188,17 @@ class TestLiveGrammar:
             gram.load(binary)
             gram.activate("rule", 0)
             gram.emptyList("filelist")
+            assert gram.getList("filelist") == []
+
             gram.appendList("filelist", "report")
             gram.appendList("filelist", "spreadsheet")
-            gram.emptyList("filelist")  # clear again
+            assert sorted(gram.getList("filelist")) == ["report", "spreadsheet"]
+
+            gram.emptyList("filelist")
+            assert gram.getList("filelist") == [], "emptyList did not clear"
+
             gram.appendList("filelist", "document")
+            assert gram.getList("filelist") == ["document"]
         finally:
             gram.unload()
 
