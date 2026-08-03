@@ -373,3 +373,122 @@ class TestLayerBoundary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Loader lifecycle: registered is not the same as started
+# ---------------------------------------------------------------------------
+
+class TestLoaderLifecycle(unittest.TestCase):
+    """``add_loader()`` before ``natConnect()`` could only register the loader —
+    there was no engine to attach to yet — and nothing started it afterwards.
+    Because ``running`` was derived from registry membership, such a loader was
+    reported as running in the tray while its ``start()`` had never been called.
+    """
+
+    def setUp(self):
+        from natlink_compat._state import _state
+        self._state = _state
+        self._saved = list(_state.loader_registry)
+        _state.loader_registry.clear()
+        _state.backend = None            # disconnected
+
+    def tearDown(self):
+        self._state.loader_registry[:] = self._saved
+        from natlink_compat._actions import invalidate_loader_cache
+        invalidate_loader_cache()
+
+    def _loader(self, name="Pending"):
+        l = MagicMock()
+        type(l).__name__ = name
+        return l
+
+    def test_add_while_disconnected_registers_but_does_not_start(self):
+        from natlink_compat._loaders import add_loader, get_loaders, get_running_loaders
+        l = self._loader()
+        add_loader(l, _module_name="pending_pkg")
+        self.assertIn(l, get_loaders(), "loader was not registered")
+        self.assertFalse(l.start.called, "start() ran with no connection")
+        self.assertNotIn(l, get_running_loaders(),
+                         "an unstarted loader is reported as running")
+
+    def test_connect_starts_the_pending_loader(self):
+        from natlink_compat._loaders import (add_loader, start_pending_loaders,
+                                             get_running_loaders)
+        l = self._loader()
+        add_loader(l, _module_name="pending_pkg")
+        started = start_pending_loaders()
+        self.assertEqual(started, 1)
+        l.start.assert_called_once()
+        self.assertIn(l, get_running_loaders())
+
+    def test_pending_start_is_not_repeated(self):
+        from natlink_compat._loaders import add_loader, start_pending_loaders
+        l = self._loader()
+        add_loader(l, _module_name="pending_pkg")
+        start_pending_loaders()
+        self.assertEqual(start_pending_loaders(), 0, "loader started twice")
+        l.start.assert_called_once()
+
+    def test_active_loader_none_is_not_registered(self):
+        """natlinkcore publishes shutdown with `natlink.active_loader = None`.
+
+        Registering that put a NoneType entry in the registry, so get_loaders()
+        handed callers a None to act on.
+        """
+        from natlink_compat._loaders import register_running_loader, get_loaders
+        register_running_loader(None)
+        self.assertEqual(get_loaders(), [], "None was registered as a loader")
+
+    def test_register_running_loader_marks_it_started(self):
+        from natlink_compat._loaders import (register_running_loader,
+                                             get_running_loaders)
+        l = self._loader("SelfRegistered")
+        register_running_loader(l)
+        self.assertIn(l, get_running_loaders(),
+                      "a self-registering loader is already running")
+
+
+class TestLoaderProtocolMatchesReality(unittest.TestCase):
+    """The exported protocol rejected loaders natlink itself runs.
+
+    ``runtime_checkable`` protocols require *every* declared member, so
+    declaring both start() and stop() meant a perfectly valid loader without
+    a stop() failed ``isinstance``. A third party validating against the
+    documented protocol would have rejected working code.
+    """
+
+    def test_start_only_loader_satisfies_the_protocol(self):
+        from natlink_compat import LoaderProtocol
+
+        class StartOnly:
+            def start(self): pass
+
+        self.assertTrue(isinstance(StartOnly(), LoaderProtocol),
+                        "a start()-only loader must satisfy LoaderProtocol")
+
+    def test_is_loader_matches_what_add_loader_accepts(self):
+        from natlink_compat import is_loader
+        from natlink_compat._loaders import add_loader
+
+        class StartOnly:
+            def start(self): pass
+
+        class RunOnly:
+            def run(self): pass
+
+        class NotALoader:
+            pass
+
+        self.assertTrue(is_loader(StartOnly()))
+        self.assertTrue(is_loader(RunOnly()), "run() is the natlinkcore form")
+        self.assertFalse(is_loader(NotALoader()))
+
+        # add_loader must agree with is_loader on the rejection case.
+        with self.assertRaises(TypeError):
+            add_loader(NotALoader())
+
+    def test_helpers_are_reachable_through_natlink(self):
+        import natlink
+        for name in ("is_loader", "get_running_loaders", "LoaderProtocol"):
+            self.assertTrue(hasattr(natlink, name), f"natlink.{name} missing")

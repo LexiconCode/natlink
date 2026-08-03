@@ -7,6 +7,8 @@ third-party grammar loaders.
 
 ::: natlink.LoaderProtocol
 
+::: natlink.is_loader
+
 ## `add_loader`
 
 ::: natlink.add_loader
@@ -22,6 +24,8 @@ third-party grammar loaders.
 ## `get_loaders`
 
 ::: natlink.get_loaders
+
+::: natlink.get_running_loaders
 
 ## `ensure_natlinkcore_logging`
 

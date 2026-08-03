@@ -14,6 +14,7 @@ import contextlib
 import logging
 import threading
 import time
+from typing import Optional, Sequence
 
 from natlink_com import NatlinkCOM
 
@@ -241,8 +242,14 @@ def _activate(discovered):
             start_loader(mod, mod_name, _notify=False)
         _on_loaders_changed()
 
+    # Loaders handed to add_loader() before there was a connection could only
+    # be registered at the time; start them now that the backend exists.
+    from ._loaders import start_pending_loaders
+    start_pending_loaders()
 
-def natConnect(bUseThreads: bool = False, *, discovered_loaders=None):
+
+def natConnect(bUseThreads: bool = False, *,
+               discovered_loaders: "Optional[Sequence[tuple]]" = None):
     """Connect to Dragon NaturallySpeaking.
 
     This will launch Dragon if it is not already running. As a side effect,

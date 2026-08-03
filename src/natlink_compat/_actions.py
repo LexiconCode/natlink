@@ -157,9 +157,11 @@ def get_loader_states():
             return _state.loader_states_cache
         try:
             from ._loaders import (get_all_loader_names, get_disabled_loaders,
-                                   get_loaders, _loader_base_name)
+                                   get_running_loaders, _loader_base_name)
             disabled = get_disabled_loaders()
-            running = {_loader_base_name(l) for l in get_loaders()}
+            # Registered is not the same as running: a loader added before
+            # natConnect is in the registry with start() never called.
+            running = {_loader_base_name(l) for l in get_running_loaders()}
             _state.loader_states_cache = [
                 (name, name not in disabled, name in running)
                 for name, _ in get_all_loader_names()

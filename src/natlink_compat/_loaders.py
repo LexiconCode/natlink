@@ -25,6 +25,11 @@ class _LoaderEntry:
     loader: object
     mod_name: str = ""
     name: str = ""
+    # False while a loader is registered but its start()/run() has not been
+    # called — the state add_loader() leaves behind when invoked before
+    # natConnect. Registry membership alone cannot mean "running": the tray
+    # and get_loader_states() would report a loader that never started.
+    started: bool = False
 
     def __post_init__(self):
         if not self.name:
@@ -53,11 +58,12 @@ def _find_entry_by_name(name: str) -> '_LoaderEntry | None':
     return None
 
 
-def _register(loader, mod_name=""):
+def _register(loader, mod_name="", started=False):
     """Add a loader to the registry. No-op if already present."""
     if _find_entry(loader) is not None:
         return
-    _state.loader_registry.append(_LoaderEntry(loader=loader, mod_name=mod_name))
+    _state.loader_registry.append(
+        _LoaderEntry(loader=loader, mod_name=mod_name, started=started))
 
 
 def _unregister(loader):
@@ -263,9 +269,12 @@ def start_loader(loader, mod_name="", *, _notify=True):
         entry = _state.loader_registry[-1]
         if mod_name and not entry.mod_name:
             entry.mod_name = mod_name
+        entry.started = True
     elif _find_entry(loader) is None:
-        _register(loader, mod_name)
+        _register(loader, mod_name, started=True)
         log.info("Loader registered (already running): %s", _loader_name(loader))
+    else:
+        _find_entry(loader).started = True
 
     if _notify:
         _on_loaders_changed()
@@ -310,7 +319,8 @@ def add_loader(loaders, *, _module_name=""):
         if _find_entry(loader) is not None:
             log.debug("add_loader: %s already active", _loader_name(loader))
             continue
-        if not (hasattr(loader, "start") or hasattr(loader, "run")):
+        from ._loader_protocol import is_loader
+        if not is_loader(loader):
             raise TypeError(
                 f"Loader must have start() or run(), got {type(loader)}")
         if _state.connected:
@@ -395,9 +405,15 @@ def register_running_loader(loader):
     Supports frameworks that publish their active loader object from inside
     start/run, such as natlinkcore's natlink.active_loader pattern.
     """
-    if _find_entry(loader) is not None:
+    if loader is None:
+        # `natlink.active_loader = None` is how a loader publishes that it has
+        # shut down. Registering it would put a NoneType entry in the registry
+        # and get_loaders() would hand callers a None.
         return
-    _register(loader)
+    if _find_entry(loader) is not None:
+        _find_entry(loader).started = True
+        return
+    _register(loader, started=True)
     log.info("Loader registered (already running): %s", _loader_name(loader))
     _on_loaders_changed()
 
@@ -405,6 +421,28 @@ def register_running_loader(loader):
 def get_loaders():
     """Return a list of all active loader objects (snapshot)."""
     return [e.loader for e in _state.loader_registry]
+
+
+def get_running_loaders():
+    """Loaders whose start()/run() has actually been called."""
+    return [e.loader for e in _state.loader_registry if e.started]
+
+
+def start_pending_loaders():
+    """Start loaders registered before the connection existed.
+
+    ``add_loader()`` called while disconnected can only register — there is no
+    engine for the loader to attach to yet. Nothing started them afterwards,
+    so they stayed registered-but-never-started while being reported as
+    running. natConnect calls this once the backend is up.
+    """
+    pending = [e for e in _state.loader_registry if not e.started]
+    for entry in pending:
+        log.info("Starting loader deferred from before connect: %s", entry.name)
+        start_loader(entry.loader, entry.mod_name, _notify=False)
+    if pending:
+        _on_loaders_changed()
+    return len(pending)
 
 
 def clear_all():

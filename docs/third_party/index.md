@@ -174,7 +174,8 @@ installed.
 Lifecycle:
 
 1. discovery/import
-2. activation via `start()`
+2. registration
+3. activation via `start()`
 
 During discovery:
 
@@ -183,11 +184,34 @@ During discovery:
 
 During activation:
 
-- natlink calls `start()` after COM connection succeeds
+- natlink calls `start()` (or `run()`) once a COM connection exists
 
 During shutdown:
 
-- natlink calls `stop()` before COM teardown
+- natlink calls `stop()` before COM teardown, falling back to
+  `unload_all_loaded_modules()` for loaders that have no `stop()`
+
+### Registered is not the same as running
+
+A loader can be registered before there is anything to attach to. If
+`add_loader()` is called while disconnected, natlink registers the loader and
+defers `start()` until `natConnect()` succeeds — a loader cannot attach to an
+engine that does not exist yet.
+
+- `get_loaders()` returns every **registered** loader
+- `get_running_loaders()` returns only those whose `start()`/`run()` has run
+
+The tray and state snapshots report the second. A loader added before connect
+therefore appears registered but not running until the connection comes up.
+
+### Validating a loader
+
+`add_loader()` accepts anything with `start()` **or** `run()`. Use
+`natlink.is_loader(obj)` for that same check.
+
+Prefer it over `isinstance(obj, LoaderProtocol)`: a `Protocol` cannot express
+"start() or run()", so the protocol declares only `start()` and a valid
+`run()`-only loader will not satisfy `isinstance`.
 
 Compatibility-only shims still exist for natlinkcore-style loaders:
 
