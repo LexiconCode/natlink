@@ -14,9 +14,19 @@ import logging
 import re
 import time
 
+from . import _uipi
+
 log = logging.getLogger("natlink.com.sendinput")
 
 user32 = ctypes.windll.user32
+
+# Private handle so GetLastError is readable: the shared ctypes.windll.user32
+# is not created with use_last_error, and any intervening call can clobber the
+# thread's error code before it is read back.
+_user32_err = ctypes.WinDLL("user32", use_last_error=True)
+_user32_err.SendInput.restype = ctypes.c_uint
+_ERROR_ACCESS_DENIED = 5
+
 user32.MapVirtualKeyW.argtypes = [ctypes.c_uint, ctypes.c_uint]
 user32.MapVirtualKeyW.restype = ctypes.c_uint
 user32.VkKeyScanW.argtypes = [ctypes.c_wchar]
@@ -75,18 +85,54 @@ class INPUT(ctypes.Structure):
     ]
 
 
-user32.SendInput.restype = ctypes.c_uint
+def _last_error():
+    """Thread's last Win32 error.
+
+    Indirected so tests can simulate a failure without patching
+    ``ctypes.get_last_error`` itself -- that is process-global and is the same
+    call the connection mutex uses to detect ERROR_ALREADY_EXISTS, so faking
+    it corrupts unrelated code running on other threads.
+    """
+    return ctypes.get_last_error()
 
 
-def _send_inputs(inputs):
-    """Call Win32 SendInput with a list of INPUT structs."""
+def _send_inputs(inputs, operation="SendInput"):
+    """Call Win32 SendInput with a list of INPUT structs.
+
+    Two distinct failures hide here, and neither is visible from the return
+    value alone:
+
+    UIPI refusing the injection outright shows up as a short count with
+    ERROR_ACCESS_DENIED, which the old code reported as a bare "sent 0/4"
+    with no reason. GetLastError needs a private WinDLL -- the shared
+    ``ctypes.windll.user32`` is not created with use_last_error, so the code
+    read back from it is not trustworthy.
+
+    An elevated foreground window is worse: SendInput accepts every event and
+    sets no error while the keystrokes go nowhere useful. Only comparing
+    integrity levels detects that, so it is checked before injecting.
+    """
     n = len(inputs)
     if n == 0:
         return
+    _uipi.warn_if_foreground_outranks_us(operation)
+
     arr = (INPUT * n)(*inputs)
-    sent = user32.SendInput(n, ctypes.cast(arr, ctypes.c_void_p), ctypes.sizeof(INPUT))
-    if sent != n:
-        log.warning("SendInput: sent %d/%d events", sent, n)
+    ctypes.set_last_error(0)
+    sent = _user32_err.SendInput(n, ctypes.cast(arr, ctypes.c_void_p),
+                                 ctypes.sizeof(INPUT))
+    if sent == n:
+        return
+
+    err = _last_error()
+    if err == _ERROR_ACCESS_DENIED:
+        log.warning(
+            "%s: Windows refused the injection (%d/%d events) -- the target "
+            "runs at a higher integrity level than natlink. Run natlink "
+            "elevated to send keys to elevated applications.",
+            operation, sent, n)
+    else:
+        log.warning("%s: sent %d/%d events (error %d)", operation, sent, n, err)
 
 
 def _vk_input(vk, down=True, extended=False):
@@ -290,7 +336,7 @@ def send_dragon_keys(specification):
                 inputs.append(_vk_input(vk, down=False, extended=ext))
 
     if inputs:
-        _send_inputs(inputs)
+        _send_inputs(inputs, "playString")
         log.debug("SendInput: %d events for %d chars", len(inputs), len(specification))
 
 
@@ -316,6 +362,6 @@ def send_events(event_buffer):
             inputs.append(_vk_input(vk, down=False, extended=extended))
 
     if inputs:
-        _send_inputs(inputs)
+        _send_inputs(inputs, "playEvents")
         log.debug("SendInput: %d events from %d-byte buffer",
                   len(inputs), len(event_buffer))
