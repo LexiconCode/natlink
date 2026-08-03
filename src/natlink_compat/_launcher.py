@@ -353,7 +353,7 @@ def _do_activate_on_main(launcher, natlink):
     """
     if not launcher.inactive:
         return
-    from ._ui_protocol import notify_text
+    from ._ui_protocol import set_phase, PHASE_INACTIVE, notify_text
 
     log.info("Activate: reconnecting to Dragon")
     if not _probe_and_wait(launcher.shutdown,
@@ -364,9 +364,20 @@ def _do_activate_on_main(launcher, natlink):
         launcher.inactive = False
         _start_monitor_if_needed(launcher)
         notify_text("[Natlink active — reconnected to Dragon.]\r\n")
-    else:
-        notify_text("[Natlink could not reconnect — another process may "
-                    "still own the Dragon connection.]\r\n")
+        return
+
+    # _connect left the phase at PHASE_ERROR, but we are still inactive and
+    # the flag still suppresses restart/exited/reappeared in the event loop.
+    # The UI derives its toggle from the phase, so leaving it at ERROR
+    # unchecks "Release Dragon" while inactive is True — the reclaim branch
+    # becomes unreachable and _do_deactivate_on_main early-returns, wedging
+    # the launcher until restart. Restore the phase that matches the flag.
+    from ._state import _state
+    reason = _state.error_message or "another process may still own it"
+    set_phase(PHASE_INACTIVE)
+    notify_text(f"[Natlink could not reconnect to Dragon — {reason}. "
+                "Still inactive; uncheck Configure > Release Dragon to "
+                "retry.]\r\n")
 
 
 # ---------------------------------------------------------------------------

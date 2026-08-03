@@ -134,18 +134,33 @@ class UIProvider:
         callbacks, and timers) so another process can connect — gated behind
         a confirmation dialog. Disabling reconnects without confirmation.
         """
-        if self._is_inactive():
-            natlink_compat.set_inactive(False)
-            return
         from natlink_compat import msgbox, MB_ICONWARNING, MB_YESNO, IDYES
+        if self._is_inactive():
+            self._warn_if_unserviced(natlink_compat.set_inactive(False))
+            return
         confirm = msgbox(
-            "Go inactive and release Dragon?\n\n"
+            "Release Dragon?\n\n"
             "This drops all active grammars, callbacks, and timers and frees "
             "the Dragon connection so another process can connect. Natlink "
-            "stays inactive until you uncheck this item.",
+            "stays released until you uncheck this item.",
             "Natlink", MB_YESNO | MB_ICONWARNING)
         if confirm == IDYES:
-            natlink_compat.set_inactive(True)
+            self._warn_if_unserviced(natlink_compat.set_inactive(True))
+
+    @staticmethod
+    def _warn_if_unserviced(signaled):
+        """Report a request no launcher was running to service.
+
+        set_inactive only signals a named event; the work happens on the
+        launcher's main thread. Without a launcher the signal goes nowhere,
+        and the phase never changes — so the menu item silently springs back
+        with no indication the request was dropped.
+        """
+        if signaled:
+            return
+        from natlink_compat import msgbox, MB_ICONWARNING
+        msgbox("No natlink launcher is running to service this request.",
+               "Natlink", MB_ICONWARNING)
 
     # --- Desktop file-opening actions ---
 
