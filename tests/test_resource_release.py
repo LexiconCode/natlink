@@ -271,3 +271,43 @@ class TestPerLoaderRelease:
                     g.unload()
                 except Exception:
                     pass
+
+
+@pytest.mark.online
+@pytest.mark.teardown
+class TestAllEngineSinksDrain:
+    """Everything natlink registers with the engine must let go at teardown.
+
+    ``ISRCentralW`` is the only interface exposing ``UnRegister``. The action
+    sink (registered on OutputEvent and Interpreter) and the dictation sink
+    expose ``Register`` only, so for those, releasing our interface pointers
+    is the entire release mechanism -- there is nothing else to call.
+
+    Measured on Dragon 13: engine sink 7 refs -> 0, action sink 3 refs -> 0.
+
+    Opt-in (``pytest -m teardown``): the only way to observe the drain is to
+    disconnect, and the reconnect that follows costs the suite ~70s.
+    """
+
+    def test_engine_and_action_sinks_release_on_disconnect(self, live_connection):
+        import natlink_compat as natlink
+        from natlink_compat._state import _state
+
+        conn = _state.backend.conn
+        engine_sink, action_sink = conn._engine_sink, conn._action_sink
+        assert _rc(engine_sink) > 0, "engine sink was never registered"
+        assert _rc(action_sink) > 0, "action sink was never registered"
+
+        natlink.natDisconnect()
+        _drain()
+        try:
+            assert _rc(engine_sink) == 0, (
+                f"engine sink retained {_rc(engine_sink)} refs after disconnect")
+            assert _rc(action_sink) == 0, (
+                f"action sink retained {_rc(action_sink)} refs — it has no "
+                f"UnRegister, so releasing the interfaces is the only way it "
+                f"can be let go")
+        finally:
+            # _ensure_connected reconnects for the next test, but be explicit.
+            if not _state.connected:
+                natlink.natConnect(discovered_loaders=[])

@@ -187,6 +187,7 @@ def pytest_collection_modifyitems(config, items):
     markexpr = config.getoption("-m", default="")
     want_experimental = "experimental" in markexpr
     want_nsformat = "nsformat" in markexpr
+    want_teardown = "teardown" in markexpr
 
     deselected = []
     remaining = []
@@ -195,6 +196,9 @@ def pytest_collection_modifyitems(config, items):
             deselected.append(item)
             continue
         if "nsformat" in item.keywords and not want_nsformat:
+            deselected.append(item)
+            continue
+        if "teardown" in item.keywords and not want_teardown:
             deselected.append(item)
             continue
         if "online" in item.keywords and not _DRAGON_RUNNING:

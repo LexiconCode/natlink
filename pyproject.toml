@@ -76,6 +76,7 @@ markers = [
     "minimal: fast regression guard — one test per feature (<30s)",
     "experimental: slow or unreliable tests — run with: pytest -m experimental",
     "nsformat: Dragon text formatting tests — run with: pytest -m nsformat",
+    "teardown: disconnects the shared session, forcing a costly reconnect — run with: pytest -m teardown",
 ]
 pythonpath = [
     "src",
