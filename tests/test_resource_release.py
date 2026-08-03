@@ -311,3 +311,94 @@ class TestAllEngineSinksDrain:
             # _ensure_connected reconnects for the next test, but be explicit.
             if not _state.connected:
                 natlink.natConnect(discovered_loaders=[])
+
+
+@pytest.mark.online
+class TestResultObjectLifetime:
+    """Each live result object holds Dragon references plus an
+    ``ISRResMemory::LockSet(True)`` on the utterance's wave data, so they must
+    not accumulate. They are tracked by weakref rather than owned: the wrapper
+    is an ephemeral callback argument, but consumers may retain it (dragonfly
+    keeps results for corrections).
+
+    There is no ``LockSet(False)`` — as in the C++ original, the lock lives on
+    the result object and goes when the object is released.
+    """
+
+    def _mimic(self, natlink, n):
+        from natlink_com._pump import pump
+        for _ in range(n):
+            natlink.recognitionMimic(["lifetime", "probe", "utterance"])
+            for _ in range(6):
+                pump()
+                time.sleep(0.01)
+
+    def test_results_do_not_accumulate_and_clear_when_dropped(self, live_connection):
+        import gc
+        import natlink_compat as natlink
+        from natlink_com import _res_obj
+
+        retained = []
+        keep = {"on": False}
+        gram = natlink.GramObj()
+        gram.setResultsCallback(
+            lambda w, r: retained.append(r) if keep["on"] else None)
+        gram.load(compile_grammar("<r> exported = lifetime probe utterance;"))
+        gram.activate("r", 0)
+        try:
+            # Not retained: nothing should be left alive.
+            self._mimic(natlink, 5)
+            gc.collect()
+            _drain(0.3)
+            assert len(_res_obj._live_res_objs) == 0, (
+                "result objects accumulated even though nothing retained them")
+
+            # Retained: tracked for exactly as long as the consumer holds them.
+            keep["on"] = True
+            self._mimic(natlink, 5)
+            gc.collect()
+            assert len(retained) == 5
+            assert len(_res_obj._live_res_objs) == 5, (
+                "retained result objects are not tracked, so natDisconnect "
+                "would not release them")
+
+            # Dropped: the weakref callback must clear the registry.
+            retained.clear()
+            gc.collect()
+            _drain(0.3)
+            assert len(_res_obj._live_res_objs) == 0, (
+                "registry kept entries for collected result objects")
+        finally:
+            keep["on"] = False
+            try:
+                gram.unload()
+            except Exception:
+                pass
+
+    def test_released_result_fails_cleanly_rather_than_crashing(self, live_connection):
+        """natDisconnect releases results out from under any consumer still
+        holding one; using it afterwards must raise, not access freed COM."""
+        import natlink_compat as natlink
+        from natlink_com._pump import pump
+
+        got = []
+        gram = natlink.GramObj()
+        gram.setResultsCallback(lambda w, r: got.append(r))
+        gram.load(compile_grammar("<r> exported = released result probe;"))
+        gram.activate("r", 0)
+        try:
+            natlink.recognitionMimic(["released", "result", "probe"])
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not got:
+                pump()
+                time.sleep(0.01)
+            assert got, "no result delivered"
+
+            got[0]._proxy.release()
+            with pytest.raises(Exception):
+                got[0].getWords(0)
+        finally:
+            try:
+                gram.unload()
+            except Exception:
+                pass
