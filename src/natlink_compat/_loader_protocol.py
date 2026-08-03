@@ -23,10 +23,10 @@ class LoaderProtocol(Protocol):
 
     Only ``start`` is declared below. ``runtime_checkable`` protocols test for
     the presence of *every* declared member, so declaring the optional ones
-    would make ``isinstance()`` reject loaders natlink runs happily — as it
-    previously did for any loader without a ``stop()``. A ``run()``-only
-    loader is valid but still will not satisfy ``isinstance``; use
-    :func:`is_loader` for the acceptance test natlink itself applies.
+    would make ``isinstance()`` reject loaders natlink runs happily — any
+    loader without a ``stop()``. A ``run()``-only loader is valid but still
+    will not satisfy ``isinstance``; use :func:`is_loader` for the acceptance
+    test natlink itself applies.
 
     Optional members, each used when present:
 

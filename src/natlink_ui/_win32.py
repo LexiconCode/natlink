@@ -36,11 +36,10 @@ user32.DefWindowProcW.argtypes = [wt.HWND, ctypes.c_uint, wt.WPARAM, wt.LPARAM]
 user32.DefWindowProcW.restype = LRESULT
 
 # Declare every signature natlink_ui relies on. Without these, ctypes marshals
-# handles as C int: CreateWindowExW would truncate the returned HWND and
-# PostMessageW would truncate hwnd/wparam/lparam on 64-bit. These used to be
-# configured only as a side effect of natlink_com._hidden_wnd being imported
-# first into the shared ctypes.windll cache, which left natlink_ui's 64-bit
-# correctness dependent on import order.
+# handles as C int: CreateWindowExW truncates the returned HWND and
+# PostMessageW truncates hwnd/wparam/lparam on 64-bit. Declaring them here
+# rather than inheriting whatever another package left in the shared
+# ctypes.windll cache keeps correctness independent of import order.
 user32.RegisterClassExW.restype = wt.ATOM
 user32.CreateWindowExW.restype = wt.HWND
 user32.DestroyWindow.argtypes = [wt.HWND]

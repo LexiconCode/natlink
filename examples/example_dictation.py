@@ -38,6 +38,9 @@ class DictationCapture:
         """Deactivate and show final buffer."""
         text = self.dobj.getText(0, self.dobj.getLength())
         self.dobj.deactivate()
+        # deactivate() alone releases nothing -- Dragon keeps every
+        # reference on the dictation sink until destroy() is called.
+        self.dobj.destroy()
         print(f"\nFinal buffer ({self.dobj.getLength()} chars):")
         print(text)
 

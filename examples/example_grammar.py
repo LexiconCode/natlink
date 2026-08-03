@@ -66,17 +66,25 @@ class MyGrammar:
         pass
 
     def on_results(self, words, results):
-        """Called when a phrase is recognized."""
-        if not isinstance(words, list):
+        """Called when a phrase is recognized.
+
+        For a command grammar each entry is a ``(word, ruleNumber)`` tuple;
+        dictation grammars deliver plain strings. Normalise before use --
+        joining or comparing the raw entries fails on the tuple form.
+        """
+        if not isinstance(words, list) or not words:
             return
 
-        print(f"Recognized: {' '.join(words)}")
+        spoken = [w[0] if isinstance(w, tuple) else w for w in words]
+        rules = {w[1] for w in words if isinstance(w, tuple)}
+        print(f"Recognized: {' '.join(spoken)}"
+              + (f"   (rule {rules.pop()})" if len(rules) == 1 else ""))
 
         # Check which rule matched
-        if words[0] == "hello":
+        if spoken[0] == "hello":
             print("  -> Greeting detected!")
-        elif words[0] == "open" and len(words) > 1:
-            app = words[1]
+        elif spoken[0] == "open" and len(spoken) > 1:
+            app = spoken[1]
             print(f"  -> Launch: {app}")
 
             # Update the list dynamically

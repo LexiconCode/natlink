@@ -350,15 +350,12 @@ def input_from_file(conn, path, flags=0, playlist=b""):
                         "(Dragon omits it from W-variant marshal); "
                         "playlist ignored, playing entire file")
 
-        # Dragon reports completion as AttribChanged2(DGNSRAC_PLAYBACKDONE),
-        # which _engine_sink turns into signal(WM_ATTRIBCHANGED, dwCode) —
-        # the same message-entry mechanism playString/execScript/mimic use.
-        # This previously waited on conn.playback_done, a Win32 event that
-        # nothing in the codebase ever signals, so the call could only ever
-        # burn the full timeout: measured at exactly 300.0s against a live
-        # Dragon with a valid WAV. push_message_entry before EnableSet, so a
-        # completion arriving immediately is caught by message_loop's
-        # pre-consumed check rather than lost.
+        # Completion arrives as AttribChanged2(DGNSRAC_PLAYBACKDONE), which
+        # _engine_sink turns into signal(WM_ATTRIBCHANGED, dwCode) — the same
+        # message-entry mechanism playString/execScript/mimic use. Waiting on
+        # a Win32 event instead would block until the timeout, since nothing
+        # signals one. Push the entry before EnableSet so an immediate
+        # completion is caught by message_loop's pre-consumed check.
         from . import _hidden_wnd
         from ._dspeech_constants import DGNSRAC_PLAYBACKDONE
         entry = push_message_entry(_hidden_wnd.WM_ATTRIBCHANGED,

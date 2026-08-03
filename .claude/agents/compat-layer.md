@@ -21,9 +21,9 @@ Read `.claude/agents/_shared.md` first.
 ## Edges you export
 
 Module docstrings are the contracts:
-- `_ui_protocol.py` — `PHASE_*` constants and `UIProvider` ABC. Consumed
+- `_ui_protocol.py` — `PHASE_*` constants and `UIProvider` Protocol. Consumed
   by `ui`.
-- `_ui_dispatch.py` — `set_phase`, `notify_ui`, `notify_text`. Consumed
+- `_ui_protocol.py` also carries `set_phase`, `notify_ui`, `notify_text`. Consumed
   by `ui` and internally.
 - `_loaders.py` — `add_loader`, `remove_loader`, `reload_loader`,
   `get_loaders`, `register_running_loader`, discovery helpers. Consumed

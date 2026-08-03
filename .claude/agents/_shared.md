@@ -14,12 +14,15 @@ natlink_com  ←  natlink_compat  ←  natlink_ui
 - Tests may import across layers as needed.
 
 Enforced by `import-linter` (see `pyproject.toml [tool.importlinter]`).
-Run `lint-imports` locally or in CI.
+Run `lint-imports` locally — it is declared in the `dev` extra but is not
+installed by default, and there is no CI, so the contract only runs when
+someone runs it.
 
 ## STA / threading discipline
 
-- All COM state transitions run on the apartment thread created in
-  `natlink_compat._launcher._init_process`.
+- All COM state transitions run on the STA thread established by
+  `natlink_compat._launcher.run()` (sets `sys.coinit_flags = 2`, then
+  `CoInitializeEx(None, 2)`).
 - Worker threads (monitor, RPC delivery) only `SetEvent`. The pump
   consumes on the main thread and dispatches via `_hidden_wnd.dispatch`
   or `signal` / `trigger_message`.

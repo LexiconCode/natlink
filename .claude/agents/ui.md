@@ -34,5 +34,5 @@ through `compat-layer` dispatch.
 - Tray runs on its own thread. Signal the main pump via the shutdown /
   restart named events in `natlink_com._launcher`. Do not reach into
   `compat-layer` lifecycle functions from the tray thread.
-- Test against the `UIProvider` ABC, not widget internals, so
+- Test against the `UIProvider` Protocol, not widget internals, so
   `compat-layer` can refactor dispatch without breaking your tests.

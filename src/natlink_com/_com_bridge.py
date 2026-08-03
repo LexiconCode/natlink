@@ -155,14 +155,11 @@ class NatlinkCOM:
     def get_screen_size(self) -> Tuple[int, int]:
         return get_screen_size()
 
-    # From the canonical transcriptions, not re-derived here. These three were
-    # previously hand-written as 0x80045005 / 0x80040009 / 0x8004000A, none of
-    # which any Dragon build ever returns: dspeech.h defines them via
-    # HOOKAPIERROR(x) = FACILITY_ITF | (x + 0x2000) and SPEECHERROR(x) =
-    # FACILITY_ITF | (x + 0x200), giving 0x8004020E / 0x8004200C / 0x80042008.
-    # With the wrong values the E_BUFFERTOOSMALL retry below could never fire
-    # (module paths longer than the 520-char buffer silently truncated) and no
-    # hook error ever matched _HOOK_SOFT_ERRORS.
+    # Import the canonical transcriptions rather than restating the literals:
+    # dspeech.h derives these from HOOKAPIERROR(x) = FACILITY_ITF | (x + 0x2000)
+    # and SPEECHERROR(x) = FACILITY_ITF | (x + 0x200), which is easy to get
+    # wrong by hand. A wrong value here fails silently -- the retry below never
+    # fires and long module paths truncate at 520 chars.
     _E_BUFFERTOOSMALL_HOOK = E_BUFFERTOOSMALL
     _HOOKERR_INJECTFAILED = HOOKERR_INJECTFAILED
     _HOOKERR_CANNOTINJECT = HOOKERR_CANNOTINJECT

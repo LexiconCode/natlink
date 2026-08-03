@@ -76,7 +76,7 @@ class TkUIProvider:
         on_state_changed(state)  — update status bar
         on_text(text, level=20)  — append to output window
 
-    Optional extensions (used by natlink.showOutput() etc.):
+    Optional extensions (used by natlink_ui.show_output() etc.):
         show_output()  — bring output window to front
         hide_output()  — hide output window
         clear_output() — clear output window text
@@ -149,7 +149,7 @@ class TkUIProvider:
 
         _tk_after(_append)
 
-    # --- Optional extensions (used by natlink.showOutput() etc.) ---
+    # --- Optional extensions (used by natlink_ui.show_output() etc.) ---
 
     def show_output(self):
         if self._output_window:

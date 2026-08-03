@@ -106,15 +106,13 @@ class ComResObj:
         Matches C++ CResultObject::getResults: ISRResGraphW::BestPathWord +
         GetWordNode per word, for *every* choice including 0.
 
-        Choice 0 used to be served from the cached SRPHRASEW words as an
-        optimisation, but the number in an SRPHRASEW word is ``dwWordNum`` —
-        a vocabulary/word-table id — whereas callers expect ``dwCFGParse``,
-        the CFG rule number. Measured on Dragon 13 and 14 with a two-rule
-        grammar sharing a word: the cached path reported the same number for
-        that word under both rules (a rule number cannot be rule-invariant),
-        while the graph correctly reported one number per rule. Since
-        ``natlinkutils.GrammarBase`` maps these onto ``gotResults_<rule>``,
-        the cached path silently dispatched every rule-based grammar wrong.
+        The cached SRPHRASEW words cannot serve choice 0: the number in an
+        SRPHRASEW word is ``dwWordNum``, a word-table id, while callers expect
+        ``dwCFGParse``, the CFG rule number. Measured on Dragon 13 and 14 with
+        a two-rule grammar sharing a word — the cached number was identical
+        under both rules, which a rule number cannot be. ``GrammarBase`` maps
+        these onto ``gotResults_<rule>``, so the wrong source silently
+        misdispatches every rule-based grammar.
         """
         self._mustbe_inited("ResObj.getResults")
         graph = self._qi("ISRResGraphW")

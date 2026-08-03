@@ -31,8 +31,10 @@ Key contract files (each owned by the listed agent):
 - `src/natlink_com/_pump.py` — pump/trigger (`com-bridge`)
 - `src/natlink_com/_dragon.py` — process control (`com-bridge`)
 - `src/natlink_com/_launcher.py` — single-instance, Dragon waits, event names (`com-bridge`)
-- `src/natlink_compat/_ui_protocol.py` — phase constants, `UIProvider` ABC (`compat-layer`)
-- `src/natlink_compat/_ui_dispatch.py` — dispatch helpers (`compat-layer`)
+- `src/natlink_compat/_ui_protocol.py` — phase constants, the `UIProvider`
+  Protocol, `build_state_snapshot`, `notify_ui` (`compat-layer`)
+- `src/natlink_compat/_loader_protocol.py` — `LoaderProtocol`, `is_loader`
+  (`compat-layer`)
 - `src/natlink_compat/_loaders.py` — loader management API (`compat-layer`)
 - `src/natlink_compat/_callbacks.py` — `CALLBACK_SLOTS` (`compat-layer`, shared with `com-bridge`)
 - `src/natlink_compat/__init__.py` — public `natlink.*` surface (`compat-layer`)
@@ -40,6 +42,7 @@ Key contract files (each owned by the listed agent):
 ## Enforcement
 
 - Import direction is checked by `import-linter`
-  (`pyproject.toml [tool.importlinter]`). Run `lint-imports` in CI.
+  (`pyproject.toml [tool.importlinter]`). There is no CI, and the tool is
+  not installed by default, so run `lint-imports` by hand.
 - Ownership rules are social; the main agent enforces them at routing
   time.
